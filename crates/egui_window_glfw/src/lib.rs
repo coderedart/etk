@@ -22,7 +22,7 @@ pub struct GlfwWindow {
     pub cursor_pos_physical_pixels: [f32; 2],
     pub raw_input: RawInput,
     pub frame_events: Vec<WindowEvent>,
-    pub latest_resize_event: Option<[u32; 2]>,
+    pub resized_event_pending: bool,
 }
 
 unsafe impl HasRawWindowHandle for GlfwWindow {
@@ -152,7 +152,7 @@ impl WindowBackend for GlfwWindow {
                 cursor_pos_physical_pixels: [cursor_position.0 as f32, cursor_position.1 as f32],
                 raw_input,
                 frame_events: vec![],
-                latest_resize_event: Some(size_physical_pixels), // provide so that on first prepare frame, renderers can set their viewport sizes
+                resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
             },
             window_info_for_gfx,
         )
@@ -163,7 +163,14 @@ impl WindowBackend for GlfwWindow {
     }
 
     fn take_latest_size_update(&mut self) -> Option<[u32; 2]> {
-        self.latest_resize_event.take()
+        if self.resized_event_pending {
+            self.resized_event_pending = false;
+            let (w, h) = self.window.get_framebuffer_size();
+            self.size_physical_pixels = [w as u32, h as u32];
+            Some(self.size_physical_pixels)
+        } else {
+            None
+        }
     }
 
     fn run_event_loop<G: GfxBackend, U: UserApp<Self, G>>(
@@ -180,7 +187,7 @@ impl WindowBackend for GlfwWindow {
             // take any frambuffer resize events
             let fb_size_update = self.take_latest_size_update();
             // prepare surface for drawing
-            gfx_backend.prepare_frame(fb_size_update, &self);
+            gfx_backend.prepare_frame(fb_size_update, &mut self);
             // begin egui with input
             egui_context.begin_frame(input);
             // run userapp gui function. let user do anything he wants with window or gfx backends
@@ -195,7 +202,7 @@ impl WindowBackend for GlfwWindow {
                     self.size_physical_pixels[0] as f32 / self.scale[0],
                     self.size_physical_pixels[1] as f32 / self.scale[0],
                 ],
-                screen_size_physical: self.size_physical_pixels,
+                framebuffer_size_physical: self.size_physical_pixels,
                 scale: self.scale[0],
             };
             // render egui with gfx backend
@@ -206,9 +213,10 @@ impl WindowBackend for GlfwWindow {
         }
     }
 
-    fn get_live_physical_size_framebuffer(&self) -> [u32; 2] {
+    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
         let physical_fb_size = self.window.get_framebuffer_size();
-        [physical_fb_size.0 as u32, physical_fb_size.1 as u32]
+        self.size_physical_pixels = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
+        self.size_physical_pixels
     }
 }
 
@@ -239,7 +247,7 @@ impl GlfwWindow {
             if let Some(ev) = match event {
                 glfw::WindowEvent::FramebufferSize(w, h) => {
                     self.size_physical_pixels = [w as u32, h as u32];
-                    self.latest_resize_event = Some([w as u32, h as u32]);
+                    self.resized_event_pending = true;
                     self.raw_input.screen_rect = Some(egui::Rect::from_two_pos(
                         Default::default(),
                         [w as f32 / self.scale[0], h as f32 / self.scale[1]].into(),

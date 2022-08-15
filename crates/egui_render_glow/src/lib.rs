@@ -301,7 +301,7 @@ impl GfxBackend for GlowBackend {
     fn prepare_frame<W: WindowBackend>(
         &mut self,
         framebuffer_size_update: Option<[u32; 2]>,
-        _window_backend: &W,
+        _window_backend: &mut W,
     ) {
         if let Some(fb_size) = framebuffer_size_update {
             unsafe {
@@ -320,7 +320,7 @@ impl GfxBackend for GlowBackend {
             meshes,
             textures_delta,
             screen_size_logical,
-            screen_size_physical,
+            framebuffer_size_physical: screen_size_physical,
             scale,
         } = egui_gfx_output;
         unsafe {

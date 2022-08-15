@@ -209,7 +209,7 @@ impl EguiPainter {
             meshes,
             textures_delta,
             screen_size_logical,
-            screen_size_physical,
+            framebuffer_size_physical: screen_size_physical,
             scale,
         }: EguiGfxOutput,
         command_encoder: &mut CommandEncoder,

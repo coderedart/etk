@@ -87,7 +87,7 @@ impl GfxBackend for WgpuBackend {
     fn prepare_frame<W: WindowBackend>(
         &mut self,
         framebuffer_size_update: Option<[u32; 2]>,
-        window_backend: &W,
+        window_backend: &mut W,
     ) {
         if let Some(size) = framebuffer_size_update {
             self.surface_config.width = size[0];

@@ -48,7 +48,7 @@ pub struct EguiGfxOutput {
     pub meshes: Vec<ClippedPrimitive>,
     pub textures_delta: TexturesDelta,
     pub screen_size_logical: [f32; 2],
-    pub screen_size_physical: [u32; 2],
+    pub framebuffer_size_physical: [u32; 2],
     pub scale: f32,
 }
 
@@ -112,7 +112,7 @@ pub trait WindowBackend: Sized {
     /// Run the event loop. different backends run it differently, so they all need to take care and
     /// call the Gfx or UserApp functions at the right time.
     fn run_event_loop<G: GfxBackend, U: UserApp<Self, G>>(self, gfx_backend: G, user_app: U);
-    fn get_live_physical_size_framebuffer(&self) -> [u32; 2];
+    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2];
 }
 
 /// This is the trait to implement for Gfx backends. these could be Gfx APIs like opengl or vulkan or wgpu etc..
@@ -131,7 +131,7 @@ pub trait GfxBackend {
     fn prepare_frame<W: WindowBackend>(
         &mut self,
         framebuffer_size_update: Option<[u32; 2]>,
-        window_backend: &W,
+        window_backend: &mut W,
     );
 
     /// reference : https://github.com/gfx-rs/wgpu/wiki/Encapsulating-Graphics-Work

@@ -16,7 +16,7 @@ pub struct SDL2Backend {
     pub cursor_pos_physical_pixels: [f32; 2],
     pub raw_input: RawInput,
     pub frame_events: Vec<sdl2::event::Event>,
-    pub latest_resize_event: Option<[u32; 2]>,
+    pub latest_resize_event: bool,
     pub should_close: bool,
 }
 pub struct SDL2OpenGLWindowContext {
@@ -163,7 +163,7 @@ impl WindowBackend for SDL2Backend {
                 cursor_pos_physical_pixels,
                 raw_input,
                 frame_events: Vec::new(),
-                latest_resize_event: Some(size_physical_pixels),
+                latest_resize_event: true,
                 event_pump,
                 should_close: false,
             },
@@ -176,7 +176,14 @@ impl WindowBackend for SDL2Backend {
     }
 
     fn take_latest_size_update(&mut self) -> Option<[u32; 2]> {
-        self.latest_resize_event.take()
+        if self.latest_resize_event {
+            self.latest_resize_event = false;
+            let size = self.window.drawable_size();
+            self.size_physical_pixels = [size.0, size.1];
+            Some(self.size_physical_pixels)
+        } else {
+            None
+        }
     }
 
     fn run_event_loop<G: GfxBackend, U: UserApp<Self, G>>(
@@ -193,7 +200,7 @@ impl WindowBackend for SDL2Backend {
             // take any frambuffer resize events
             let fb_size_update = self.take_latest_size_update();
             // prepare surface for drawing
-            gfx_backend.prepare_frame(fb_size_update, &self);
+            gfx_backend.prepare_frame(fb_size_update, &mut self);
             // begin egui with input
             egui_context.begin_frame(input);
             // run userapp gui function. let user do anything he wants with window or gfx backends
@@ -208,7 +215,7 @@ impl WindowBackend for SDL2Backend {
                     self.size_physical_pixels[0] as f32 / self.scale[0],
                     self.size_physical_pixels[1] as f32 / self.scale[0],
                 ],
-                screen_size_physical: self.size_physical_pixels,
+                framebuffer_size_physical: self.size_physical_pixels,
                 scale: self.scale[0],
             };
             // render egui with gfx backend
@@ -219,9 +226,11 @@ impl WindowBackend for SDL2Backend {
         }
     }
 
-    fn get_live_physical_size_framebuffer(&self) -> [u32; 2] {
+    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
         let size = self.window.drawable_size();
-        [size.0, size.1]
+
+        self.size_physical_pixels = [size.0, size.1];
+        self.size_physical_pixels
     }
 }
 
@@ -275,7 +284,7 @@ impl SDL2Backend {
                         // physical width and height for framebuffer resize.
                         let (pw, ph) = self.window.drawable_size();
                         self.size_physical_pixels = [pw, ph];
-                        self.latest_resize_event = Some([pw, ph]);
+                        self.latest_resize_event = true;
 
                         None
                     }
