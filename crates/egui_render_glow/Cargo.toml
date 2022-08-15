@@ -1,0 +1,13 @@
+[package]
+name = "egui_render_glow"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+glow = { version = "*" }
+# raw-gl-context = { version = "*" }
+egui_backend = { path = "../egui_backend" }
+intmap = { version = "*" }
+bytemuck = { version = "*" }

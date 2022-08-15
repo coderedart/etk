@@ -7,4 +7,25 @@ license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
+[dev-dependencies]
+egui_backend = { path = "crates/egui_backend" }
+egui_window_glfw = { path = "crates/egui_window_glfw" }
+egui_render_glow = { path = "crates/egui_render_glow" }
+egui_window_sdl2 = { path = "crates/egui_window_sdl2" }
+
+egui_render_wgpu = { path = "crates/egui_render_wgpu" }
+egui = { version = "*" }
+tracing-subscriber = { version = "*", features = ["env-filter"] }
+tracing = { version = "*" }
+[workspace]
+members = [
+    "crates/egui_backend",
+    "crates/egui_window_glfw",
+    "crates/egui_window_sdl2",
+    "crates/egui_render_glow",
+    "crates/egui_render_wgpu",
+]
+
+[patch.crates-io]
+egui = { git = "https://github.com/emilk/egui.git" }
+glfw = { git = "https://github.com/coderedart/glfw-rs.git" }

@@ -1,0 +1,10 @@
+[package]
+name = "egui_window_glfw"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+glfw = { version = "*" , features = ["all"]}
+egui_backend = { path = "../egui_backend" }
