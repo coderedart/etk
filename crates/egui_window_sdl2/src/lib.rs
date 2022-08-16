@@ -2,8 +2,8 @@ use std::{path::PathBuf, str::FromStr};
 
 use egui::{Event, Key, Modifiers, PointerButton, RawInput};
 use egui_backend::{
-    raw_window_handle::HasRawWindowHandle, EguiGfxOutput, GfxBackend, OpenGLWindowContext, UserApp,
-    WindowBackend, WindowInfoForGfx,
+    egui, raw_window_handle::HasRawWindowHandle, EguiGfxOutput, GfxBackend, OpenGLWindowContext,
+    UserApp, WindowBackend, WindowInfoForGfx,
 };
 use sdl2::{keyboard::Scancode, video::Window, Sdl};
 

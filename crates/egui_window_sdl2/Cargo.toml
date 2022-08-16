@@ -6,6 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sdl2 = { version = "*", features = ["raw-window-handle"] }
-egui = { version = "*" }
+sdl2 = { version = "0.35.2", features = ["raw-window-handle"] }
 egui_backend = { path = "../egui_backend" }

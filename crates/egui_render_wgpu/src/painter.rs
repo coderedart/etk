@@ -441,7 +441,7 @@ impl EguiPainter {
                                             &self.nearest_sampler
                                         }
                                         egui_backend::egui::TextureFilter::Linear => {
-                                            &self.nearest_sampler
+                                            &self.linear_sampler
                                         }
                                     }),
                                 },

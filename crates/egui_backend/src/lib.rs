@@ -111,7 +111,11 @@ pub trait WindowBackend: Sized {
     fn take_latest_size_update(&mut self) -> Option<[u32; 2]>;
     /// Run the event loop. different backends run it differently, so they all need to take care and
     /// call the Gfx or UserApp functions at the right time.
-    fn run_event_loop<G: GfxBackend, U: UserApp<Self, G>>(self, gfx_backend: G, user_app: U);
+    fn run_event_loop<G: GfxBackend + 'static, U: UserApp<Self, G> + 'static>(
+        self,
+        gfx_backend: G,
+        user_app: U,
+    );
     fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2];
 }
 

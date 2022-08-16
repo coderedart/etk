@@ -7,5 +7,4 @@ edition = "2021"
 
 [dependencies]
 raw-window-handle = "0.4"
-
-egui = { version = "*", features = ["bytemuck"]}
+egui = { version = "0.18.1", features = ["bytemuck"]}
