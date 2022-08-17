@@ -29,4 +29,3 @@ members = [
 
 [patch.crates-io]
 egui = { git = "https://github.com/emilk/egui.git" }
-glfw = { git = "https://github.com/coderedart/glfw-rs.git" }

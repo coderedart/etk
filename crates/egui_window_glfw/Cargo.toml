@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["glfw/default"]
+# features of glfw crate re-exported
+glfw_all = ["glfw/all"]
+glfw_vulkan = ["glfw/vulkan"]
+glfw_wayland = ["glfw/wayland"]
 
 [dependencies]
-glfw = { version = "*" , features = ["all"]}
+glfw = { version = "*", default-features = false }
 egui_backend = { path = "../egui_backend" }

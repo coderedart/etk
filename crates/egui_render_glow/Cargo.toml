@@ -7,6 +7,6 @@ edition = "2021"
 
 [dependencies]
 glow = { version = "*" }
-egui_backend = { path = "../egui_backend" }
+egui_backend = { path = "../egui_backend" , features = ["egui_bytemuck"]}
 intmap = { version = "*" }
 bytemuck = { version = "*" }
