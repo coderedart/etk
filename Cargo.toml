@@ -15,9 +15,9 @@ egui_window_sdl2 = { path = "crates/egui_window_sdl2" }
 egui_window_winit = { path = "crates/egui_window_winit" }
 egui_render_wgpu = { path = "crates/egui_render_wgpu" }
 egui = { version = "0.19.0" }
-
 tracing-subscriber = { version = "*", features = ["env-filter"] }
 tracing = { version = "*" }
+
 [workspace]
 members = [
     "crates/egui_backend",
