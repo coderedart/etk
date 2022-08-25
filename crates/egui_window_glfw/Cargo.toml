@@ -15,4 +15,4 @@ glfw_wayland = ["glfw/wayland"]
 
 [dependencies]
 glfw = { version = "0.45", default-features = false }
-egui_backend = { path = "../egui_backend" }
+egui_backend = { version = "0.1", path = "../egui_backend" }

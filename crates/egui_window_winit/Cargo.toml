@@ -9,5 +9,5 @@ description = "winit window integration for egui"
 
 [dependencies]
 winit = { version = "0.27", features = [] }
-egui_backend = { path = "../egui_backend" }
+egui_backend = { version = "0.1", path = "../egui_backend" }
 glutin = { version = "0.29" }
