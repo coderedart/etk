@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 egui_backend = { path = "../egui_backend" , features = ["egui_bytemuck"]}
-intmap = { version = "*" }
-bytemuck = { version = "*" }
-wgpu = { version = "*" }
-pollster = { version = "*" }
+intmap = { version = "2" }
+bytemuck = { version = "1" }
+wgpu = { version = "0.13" }
+pollster = { version = "0.2" }

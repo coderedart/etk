@@ -12,5 +12,5 @@ glfw_vulkan = ["glfw/vulkan"]
 glfw_wayland = ["glfw/wayland"]
 
 [dependencies]
-glfw = { version = "*", default-features = false }
+glfw = { version = "0.45", default-features = false }
 egui_backend = { path = "../egui_backend" }

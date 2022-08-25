@@ -1,12 +1,14 @@
 pub use egui;
-
-use egui::{ClippedPrimitive, RawInput, TexturesDelta};
 pub use raw_window_handle;
+
+mod opengl;
+use egui::{ClippedPrimitive, RawInput, TexturesDelta};
+pub use opengl::*;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
 /// This configuration can be used by both Gfx and Window backends to set the right configuration
 /// OpenGL obviously has many more settings than vulkan as a lot of Window backends set these
-/// attributes at window creation itself.
+/// attributes at the time of window creation.
 ///
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
@@ -19,15 +21,6 @@ pub enum GfxApiConfig {
         debug: Option<bool>,
     },
     Vulkan {},
-}
-
-/// OpenGL Profile
-/// most of the time, we would just use Core
-#[derive(Debug, Default, Clone, Copy)]
-pub enum GlProfile {
-    #[default]
-    Core,
-    Compat,
 }
 
 impl Default for GfxApiConfig {
@@ -43,12 +36,23 @@ impl Default for GfxApiConfig {
 }
 
 /// This is the output from egui that renderer needs.
+/// meshes and textures_delta come from egui directly. but
+/// window backend needs to also provide screensize in logical coords, scale and physical framebuffer
+/// size in pixels.
 ///
 pub struct EguiGfxOutput {
+    /// from output of `Context::end_frame()`
     pub meshes: Vec<ClippedPrimitive>,
+    /// from output of `Context::end_frame()`
     pub textures_delta: TexturesDelta,
+    /// this is what you provided to `RawInput` for `Context::begin_frame()`
+    /// * used for screen_size uniform in shaders
     pub screen_size_logical: [f32; 2],
+    /// size in pixels of the current swapchain image (surface or viewport etc..) that we are rendering to.
+    /// * used to calculate scissor regions (clip rectangles)
     pub framebuffer_size_physical: [u32; 2],
+    /// scale (pixels_per_point) that was used in `RawInput`
+    /// * used to calculate scissor regions (clip rectangles)
     pub scale: f32,
 }
 
@@ -70,22 +74,6 @@ unsafe impl HasRawWindowHandle for WindowInfoForGfx {
     fn raw_window_handle(&self) -> RawWindowHandle {
         self.window_handle
     }
-}
-/// This is something transferred from window backend to gfx backends.
-/// making sure that renderers can decide everything like when to swap buffers as well as multi-threading etc..
-///
-///
-pub trait OpenGLWindowContext {
-    /// Swaps buffers (swapchain) when we are using double buffering (99% of the time, double buffering is the default)
-    /// this also flushes the opengl commands and blocks until the swapchain image is presented.
-    fn swap_buffers(&mut self);
-    /// for single threading, we should only call this once at the creation of our renderer. as we will only
-    /// use main thread most of the time
-    fn make_context_current(&mut self);
-    /// check if this is current. mostly useless if we just use single main thread.
-    fn is_current(&mut self) -> bool;
-    /// get openGL function addresses.
-    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void;
 }
 
 /// Implement this trait for your windowing backend. the main responsibility of a

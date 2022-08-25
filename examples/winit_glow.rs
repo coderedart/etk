@@ -54,7 +54,7 @@ fn main() {
             debug: None,
         },
     );
-    let glow_backend = GlowBackend::new(window_info_for_gfx, Default::default());
+    let glow_backend = GlowBackend::new(window_info_for_gfx, ());
     let app = App::new(&glow_backend);
     window_backend.run_event_loop(glow_backend, app);
 }
