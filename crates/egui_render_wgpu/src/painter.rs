@@ -2,28 +2,52 @@ use std::{
     borrow::Cow,
     convert::TryInto,
     num::{NonZeroU32, NonZeroU64},
+    sync::Arc,
 };
 
 use bytemuck::cast_slice;
 use egui_backend::{
-    egui::{epaint::ImageDelta, ClippedPrimitive, Mesh, PaintCallback, TextureId},
+    egui::{
+        epaint::ImageDelta, util::IdTypeMap, ClippedPrimitive, Mesh, PaintCallback,
+        PaintCallbackInfo, Rect, TextureId,
+    },
     EguiGfxOutput,
 };
 use intmap::IntMap;
 use wgpu::{
     AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
-    Buffer, BufferBinding, BufferDescriptor, BufferUsages, Device, Extent3d, FilterMode,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent,
+    BlendFactor, BlendOperation, BlendState, Buffer, BufferBinding, BufferBindingType,
+    BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device, Extent3d, FilterMode,
     FragmentState, FrontFace, ImageCopyTexture, ImageDataLayout, IndexFormat, MultisampleState,
     Origin3d, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
     RenderPass, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-    SamplerDescriptor, ShaderModuleDescriptor, ShaderStages, Texture, TextureAspect,
-    TextureDescriptor, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
-    TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
-    VertexStepMode,
+    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, Texture, TextureAspect,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout,
+    VertexFormat, VertexState, VertexStepMode,
 };
 
-const EGUI_SHADER_SRC: &str = include_str!("egui.wgsl");
+pub const EGUI_SHADER_SRC: &str = include_str!("egui.wgsl");
+
+type PrepareCallback = dyn Fn(&Device, &Queue, &mut IdTypeMap) + Sync + Send;
+type RenderCallback =
+    dyn for<'a, 'b> Fn(PaintCallbackInfo, &'a mut RenderPass<'b>, &'b IdTypeMap) + Sync + Send;
+
+pub struct CallbackFn {
+    pub prepare: Arc<PrepareCallback>,
+    pub paint: Arc<RenderCallback>,
+}
+
+impl Default for CallbackFn {
+    fn default() -> Self {
+        CallbackFn {
+            prepare: Arc::new(|_, _, _| ()),
+            paint: Arc::new(|_, _, _| ()),
+        }
+    }
+}
+
 pub struct EguiPainter {
     /// current capacity of vertex buffer
     pub vb_len: usize,
@@ -51,6 +75,7 @@ pub struct EguiPainter {
     /// textures to free
     pub delete_textures: Vec<TextureId>,
     pub draw_calls: Vec<EguiDrawCalls>,
+    pub custom_data: IdTypeMap,
 }
 /// textures uploaded by egui are represented by this struct
 pub struct EguiTexture {
@@ -68,11 +93,72 @@ pub enum EguiDrawCalls {
         index_end: u32,
     },
     Callback {
+        paint_callback_info: PaintCallbackInfo,
         clip_rect: [u32; 4],
         paint_callback: PaintCallback,
     },
 }
 impl EguiPainter {
+    pub fn draw_egui_with_renderpass<'rpass>(&'rpass mut self, rpass: &mut RenderPass<'rpass>) {
+        // rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &self.screen_size_bind_group, &[]);
+
+        rpass.set_vertex_buffer(0, self.vb.slice(..));
+        rpass.set_index_buffer(self.ib.slice(..), IndexFormat::Uint32);
+        for draw_call in self.draw_calls.iter() {
+            match draw_call {
+                &EguiDrawCalls::Mesh {
+                    clip_rect,
+                    texture_id,
+                    base_vertex,
+                    index_start,
+                    index_end,
+                } => {
+                    let [x, y, width, height] = clip_rect;
+                    rpass.set_scissor_rect(x, y, width, height);
+
+                    match texture_id {
+                        TextureId::Managed(key) => {
+                            rpass.set_bind_group(
+                                1,
+                                &self
+                                    .managed_textures
+                                    .get(key)
+                                    .expect("cannot find managed texture")
+                                    .bindgroup,
+                                &[],
+                            );
+                        }
+                        TextureId::User(_) => unimplemented!(),
+                    }
+                    rpass.draw_indexed(index_start..index_end, base_vertex, 0..1);
+                }
+                EguiDrawCalls::Callback {
+                    clip_rect,
+                    paint_callback,
+                    paint_callback_info,
+                } => {
+                    let [x, y, width, height] = *clip_rect;
+                    rpass.set_scissor_rect(x, y, width, height);
+                    (paint_callback
+                        .callback
+                        .downcast_ref::<CallbackFn>()
+                        .expect("failed to downcast Callbackfn")
+                        .paint)(
+                        PaintCallbackInfo {
+                            viewport: paint_callback_info.viewport,
+                            clip_rect: paint_callback_info.clip_rect,
+                            pixels_per_point: paint_callback_info.pixels_per_point,
+                            screen_size_px: paint_callback_info.screen_size_px,
+                        },
+                        rpass,
+                        &self.custom_data,
+                    );
+                }
+            }
+        }
+    }
     pub fn new(dev: &Device, surface_format: TextureFormat) -> Self {
         // create uniform buffer for screen size
         let screen_size_buffer = dev.create_buffer(&BufferDescriptor {
@@ -116,7 +202,7 @@ impl EguiPainter {
         // shader from the wgsl source.
         let shader_module = dev.create_shader_module(ShaderModuleDescriptor {
             label: Some("egui shader module"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(EGUI_SHADER_SRC)),
+            source: ShaderSource::Wgsl(Cow::Borrowed(EGUI_SHADER_SRC)),
         });
         // create pipeline using shaders + pipeline layout
         let egui_pipeline = dev.create_render_pipeline(&RenderPipelineDescriptor {
@@ -134,10 +220,10 @@ impl EguiPainter {
             fragment: Some(FragmentState {
                 module: &shader_module,
                 entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
+                targets: &[Some(ColorTargetState {
                     format: surface_format,
                     blend: Some(EGUI_PIPELINE_BLEND_STATE),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: ColorWrites::ALL,
                 })],
             }),
             multiview: None,
@@ -175,6 +261,121 @@ impl EguiPainter {
             ib_len: 0,
             delete_textures: Vec::new(),
             draw_calls: Vec::new(),
+            custom_data: IdTypeMap::default(),
+        }
+    }
+    fn set_textures(
+        &mut self,
+        dev: &Device,
+        queue: &Queue,
+        textures_delta_set: Vec<(TextureId, ImageDelta)>,
+    ) {
+        for (tex_id, delta) in textures_delta_set {
+            let (pixels, size) = match delta.image {
+                egui_backend::egui::ImageData::Color(_) => todo!(),
+                egui_backend::egui::ImageData::Font(font_image) => {
+                    let pixels: Vec<u8> = font_image
+                        .srgba_pixels(1.0)
+                        .flat_map(|c| c.to_array())
+                        .collect();
+                    (pixels, font_image.size)
+                }
+            };
+            match tex_id {
+                egui_backend::egui::TextureId::Managed(tex_id) => {
+                    if let Some(_) = delta.pos {
+                    } else {
+                        let mip_level_count = if tex_id == 0 {
+                            1
+                        } else {
+                            panic!("get mip map count formula")
+                        };
+                        let new_texture = dev.create_texture(&TextureDescriptor {
+                            label: None,
+                            size: Extent3d {
+                                width: size[0] as u32,
+                                height: size[1] as u32,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count,
+                            sample_count: 1,
+                            dimension: TextureDimension::D2,
+                            format: TextureFormat::Rgba8UnormSrgb,
+                            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                        });
+
+                        queue.write_texture(
+                            ImageCopyTexture {
+                                texture: &new_texture,
+                                mip_level: 0,
+                                origin: Origin3d::default(),
+                                aspect: TextureAspect::All,
+                            },
+                            &pixels,
+                            ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(
+                                    NonZeroU32::new(size[0] as u32 * 4)
+                                        .expect("texture bytes per row is zero"),
+                                ),
+                                rows_per_image: Some(
+                                    NonZeroU32::new(size[1] as u32)
+                                        .expect("texture rows count is zero"),
+                                ),
+                            },
+                            Extent3d {
+                                width: size[0] as u32,
+                                height: size[1] as u32,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                        let view = new_texture.create_view(&TextureViewDescriptor {
+                            label: None,
+                            format: Some(TextureFormat::Rgba8UnormSrgb),
+                            dimension: Some(TextureViewDimension::D2),
+                            aspect: TextureAspect::All,
+                            base_mip_level: 0,
+                            mip_level_count: None,
+                            base_array_layer: 0,
+                            array_layer_count: None,
+                        });
+                        let bindgroup = dev.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &self.texture_bindgroup_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: BindingResource::Sampler(if tex_id == 0 {
+                                        &self.nearest_sampler
+                                    } else {
+                                        match delta.filter {
+                                            egui_backend::egui::TextureFilter::Nearest => {
+                                                &self.nearest_sampler
+                                            }
+                                            egui_backend::egui::TextureFilter::Linear => {
+                                                &self.linear_sampler
+                                            }
+                                        }
+                                    }),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: BindingResource::TextureView(&view),
+                                },
+                            ],
+                        });
+                        self.managed_textures.insert(
+                            tex_id,
+                            EguiTexture {
+                                texture: new_texture,
+                                view,
+                                bindgroup,
+                            },
+                        );
+                    }
+                }
+                egui_backend::egui::TextureId::User(_) => todo!(),
+            }
         }
     }
     pub fn upload_egui_data(
@@ -256,7 +457,7 @@ impl EguiPainter {
                 .expect("vertex buffer length should not be zero"),
             );
             let mut index_buffer_mut = queue.write_buffer_with(
-                &self.vb,
+                &self.ib,
                 0,
                 NonZeroU64::new(
                     (self.ib_len * 4)
@@ -273,13 +474,11 @@ impl EguiPainter {
                     clip_rect,
                     primitive,
                 } = clipped_primitive;
-                // create proper clip rectangle
+                // copy paste from official egui impl because i have no idea what this is :D
                 let clip_min_x = scale * clip_rect.min.x;
                 let clip_min_y = scale * clip_rect.min.y;
                 let clip_max_x = scale * clip_rect.max.x;
                 let clip_max_y = scale * clip_rect.max.y;
-
-                // Make sure clip rect can fit within an `u32`.
                 let clip_min_x = clip_min_x.clamp(0.0, screen_size_physical[0] as f32);
                 let clip_min_y = clip_min_y.clamp(0.0, screen_size_physical[1] as f32);
                 let clip_max_x = clip_max_x.clamp(clip_min_x, screen_size_physical[0] as f32);
@@ -303,7 +502,7 @@ impl EguiPainter {
                 if clip_width == 0 || clip_height == 0 {
                     continue;
                 }
-                let clip_rect = [clip_x, clip_y, clip_width, clip_height];
+                let scissor_rect = [clip_x, clip_y, clip_width, clip_height];
                 match primitive {
                     egui_backend::egui::epaint::Primitive::Mesh(mesh) => {
                         let Mesh {
@@ -322,7 +521,7 @@ impl EguiPainter {
                             .copy_from_slice(cast_slice(&indices));
                         // record draw call
                         self.draw_calls.push(EguiDrawCalls::Mesh {
-                            clip_rect,
+                            clip_rect: scissor_rect,
                             texture_id,
                             // vertex buffer offset is in bytes. so, we divide by size to get the "nth" vertex to use as base
                             base_vertex: (vb_offset / 20)
@@ -337,172 +536,25 @@ impl EguiPainter {
                         ib_offset = new_ib_offset;
                     }
                     egui_backend::egui::epaint::Primitive::Callback(cb) => {
+                        (cb.callback
+                            .downcast_ref::<CallbackFn>()
+                            .expect("failed to downcast egui callback fn")
+                            .prepare)(dev, queue, &mut self.custom_data);
                         self.draw_calls.push(EguiDrawCalls::Callback {
-                            clip_rect,
+                            clip_rect: scissor_rect,
                             paint_callback: cb,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    pub fn draw_egui<'rpass>(&'rpass mut self, rpass: &mut RenderPass<'rpass>) {
-        // rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-        rpass.set_pipeline(&self.pipeline);
-        rpass.set_bind_group(0, &self.screen_size_bind_group, &[]);
-
-        rpass.set_vertex_buffer(0, self.vb.slice(..));
-        rpass.set_index_buffer(self.ib.slice(..), IndexFormat::Uint32);
-        for draw_call in self.draw_calls.iter() {
-            match draw_call {
-                &EguiDrawCalls::Mesh {
-                    clip_rect,
-                    texture_id,
-                    base_vertex,
-                    index_start,
-                    index_end,
-                } => {
-                    let [x, y, width, height] = clip_rect;
-                    rpass.set_scissor_rect(x, y, width, height);
-
-                    match texture_id {
-                        TextureId::Managed(key) => {
-                            rpass.set_bind_group(
-                                1,
-                                &self
-                                    .managed_textures
-                                    .get(key)
-                                    .expect("cannot find managed texture")
-                                    .bindgroup,
-                                &[],
-                            );
-                        }
-                        TextureId::User(_) => unimplemented!(),
-                    }
-                    rpass.draw_indexed(index_start..index_end, base_vertex, 0..1);
-                }
-                EguiDrawCalls::Callback {
-                    clip_rect,
-                    paint_callback: _,
-                } => {
-                    let [x, y, width, height] = *clip_rect;
-                    rpass.set_scissor_rect(x, y, width, height);
-                    unimplemented!()
-                }
-            }
-        }
-    }
-    fn set_textures(
-        &mut self,
-        dev: &Device,
-        queue: &Queue,
-        textures_delta_set: Vec<(TextureId, ImageDelta)>,
-    ) {
-        for (tex_id, delta) in textures_delta_set {
-            let (pixels, size) = match delta.image {
-                egui_backend::egui::ImageData::Color(_) => todo!(),
-                egui_backend::egui::ImageData::Font(font_image) => {
-                    let pixels: Vec<u8> = font_image
-                        .srgba_pixels(1.0)
-                        .flat_map(|c| c.to_array())
-                        .collect();
-                    (pixels, font_image.size)
-                }
-            };
-            match tex_id {
-                egui_backend::egui::TextureId::Managed(tex_id) => {
-                    if let Some(_) = delta.pos {
-                    } else {
-                        let mip_level_count = if tex_id == 0 {
-                            1
-                        } else {
-                            panic!("get mip map count formula")
-                        };
-                        let new_texture = dev.create_texture(&TextureDescriptor {
-                            label: None,
-                            size: Extent3d {
-                                width: size[0] as u32,
-                                height: size[1] as u32,
-                                depth_or_array_layers: 1,
-                            },
-                            mip_level_count,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: TextureFormat::Rgba8UnormSrgb,
-                            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                        });
-
-                        queue.write_texture(
-                            ImageCopyTexture {
-                                texture: &new_texture,
-                                mip_level: 0,
-                                origin: Origin3d::default(),
-                                aspect: TextureAspect::All,
-                            },
-                            &pixels,
-                            ImageDataLayout {
-                                offset: 0,
-                                bytes_per_row: Some(
-                                    NonZeroU32::new(size[0] as u32 * 4)
-                                        .expect("texture bytes per row is zero"),
+                            paint_callback_info: PaintCallbackInfo {
+                                viewport: Rect::from_min_size(
+                                    Default::default(),
+                                    screen_size_logical.into(),
                                 ),
-                                rows_per_image: Some(
-                                    NonZeroU32::new(size[1] as u32)
-                                        .expect("texture rows count is zero"),
-                                ),
+                                clip_rect,
+                                pixels_per_point: scale,
+                                screen_size_px: screen_size_physical,
                             },
-                            Extent3d {
-                                width: size[0] as u32,
-                                height: size[1] as u32,
-                                depth_or_array_layers: 1,
-                            },
-                        );
-                        let view = new_texture.create_view(&TextureViewDescriptor {
-                            label: None,
-                            format: Some(TextureFormat::Rgba8UnormSrgb),
-                            dimension: Some(TextureViewDimension::D2),
-                            aspect: TextureAspect::All,
-                            base_mip_level: 0,
-                            mip_level_count: None,
-                            base_array_layer: 0,
-                            array_layer_count: None,
                         });
-                        let bindgroup = dev.create_bind_group(&BindGroupDescriptor {
-                            label: None,
-                            layout: &self.texture_bindgroup_layout,
-                            entries: &[
-                                BindGroupEntry {
-                                    binding: 0,
-                                    resource: BindingResource::Sampler(if tex_id == 0 {
-                                        &self.nearest_sampler
-                                    } else {
-                                        match delta.filter {
-                                            egui_backend::egui::TextureFilter::Nearest => {
-                                                &self.nearest_sampler
-                                            }
-                                            egui_backend::egui::TextureFilter::Linear => {
-                                                &self.linear_sampler
-                                            }
-                                        }
-                                    }),
-                                },
-                                BindGroupEntry {
-                                    binding: 1,
-                                    resource: BindingResource::TextureView(&view),
-                                },
-                            ],
-                        });
-                        self.managed_textures.insert(
-                            tex_id,
-                            EguiTexture {
-                                texture: new_texture,
-                                view,
-                                bindgroup,
-                            },
-                        );
                     }
                 }
-                egui_backend::egui::TextureId::User(_) => todo!(),
             }
         }
     }
@@ -512,8 +564,8 @@ pub const SCREEN_SIZE_UNIFORM_BUFFER_BINDGROUP_ENTRY: [BindGroupLayoutEntry; 1] 
     [BindGroupLayoutEntry {
         binding: 0,
         visibility: ShaderStages::VERTEX,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Uniform,
             has_dynamic_offset: false,
             min_binding_size: NonZeroU64::new(8),
         },
@@ -531,8 +583,8 @@ pub const TEXTURE_BINDGROUP_ENTRIES: [BindGroupLayoutEntry; 2] = [
         binding: 1,
         visibility: ShaderStages::FRAGMENT,
         ty: BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
             multisampled: false,
         },
         count: None,
@@ -575,24 +627,25 @@ pub const EGUI_PIPELINE_PRIMITIVE_STATE: PrimitiveState = PrimitiveState {
 };
 
 pub const EGUI_PIPELINE_BLEND_STATE: BlendState = BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-        operation: wgpu::BlendOperation::Add,
+    color: BlendComponent {
+        src_factor: BlendFactor::One,
+        dst_factor: BlendFactor::OneMinusSrcAlpha,
+        operation: BlendOperation::Add,
     },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
+    alpha: BlendComponent {
+        src_factor: BlendFactor::OneMinusDstAlpha,
+        dst_factor: BlendFactor::One,
+        operation: BlendOperation::Add,
     },
 };
+
+// `Default::default` is not const. so, we have to manually fill the default values
 
 pub const EGUI_LINEAR_SAMPLER_DESCRIPTOR: SamplerDescriptor = SamplerDescriptor {
     label: Some("linear sampler"),
     mag_filter: FilterMode::Linear,
     min_filter: FilterMode::Linear,
     mipmap_filter: FilterMode::Linear,
-    // `Default::default` is not const. so, we have to manually fill the default values
     address_mode_u: AddressMode::ClampToEdge,
     address_mode_v: AddressMode::ClampToEdge,
     address_mode_w: AddressMode::ClampToEdge,

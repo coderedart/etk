@@ -5,15 +5,14 @@ use painter::EguiPainter;
 use pollster::block_on;
 use wgpu::{
     Adapter, Backends, CommandEncoder, CommandEncoderDescriptor, Device, DeviceDescriptor,
-    Instance, Operations, PowerPreference, PresentMode, Queue, RenderPassColorAttachment,
+    Instance, LoadOp, Operations, PowerPreference, PresentMode, Queue, RenderPassColorAttachment,
     RenderPassDescriptor, RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceTexture,
     TextureAspect, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
     TextureViewDimension,
 };
-mod painter;
-
+pub mod painter;
 pub use wgpu;
-pub struct WgpuBackend<CustomData = ()> {
+pub struct WgpuBackend {
     /// wgpu data
     pub instance: Instance,
     pub adapter: Arc<Adapter>,
@@ -26,19 +25,16 @@ pub struct WgpuBackend<CustomData = ()> {
     pub surface_current_image: Option<SurfaceTexture>,
     pub surface_view: Option<TextureView>,
     pub command_encoders: Vec<CommandEncoder>,
-    pub custom_data: CustomData,
 }
 
 #[derive(Debug, Default)]
-pub struct WgpuSettings<CustomData = ()> {
-    custom_data: CustomData,
-}
-impl<CustomData> GfxBackend for WgpuBackend<CustomData> {
-    type GfxBackendSettings = WgpuSettings<CustomData>;
+pub struct WgpuSettings {}
+impl GfxBackend for WgpuBackend {
+    type GfxBackendSettings = WgpuSettings;
 
     fn new(
         window_info_for_gfx: egui_backend::WindowInfoForGfx,
-        settings: Self::GfxBackendSettings,
+        _settings: Self::GfxBackendSettings,
     ) -> Self {
         assert!(
             window_info_for_gfx.opengl_context.is_none(),
@@ -97,7 +93,6 @@ impl<CustomData> GfxBackend for WgpuBackend<CustomData> {
             surface_config,
             surface_view: None,
             surface_current_image: None,
-            custom_data: settings.custom_data,
             command_encoders: Vec::new(),
         }
     }
@@ -161,13 +156,13 @@ impl<CustomData> GfxBackend for WgpuBackend<CustomData> {
                         .expect("failed ot get surface view for egui render pass creation"),
                     resolve_target: None,
                     ops: Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: LoadOp::Load,
                         store: true,
                     },
                 })],
                 depth_stencil_attachment: None,
             });
-            self.painter.draw_egui(&mut egui_pass);
+            self.painter.draw_egui_with_renderpass(&mut egui_pass);
         }
         self.command_encoders.push(command_encoder);
     }
