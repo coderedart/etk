@@ -1,35 +1,44 @@
+use std::sync::Arc;
+
 use egui_backend::{GfxBackend, WindowBackend};
 use painter::EguiPainter;
 use pollster::block_on;
 use wgpu::{
-    Adapter, Backends, CommandEncoderDescriptor, Device, DeviceDescriptor, Instance,
-    PowerPreference, PresentMode, Queue, RequestAdapterOptions, Surface, SurfaceConfiguration,
-    SurfaceTexture, TextureAspect, TextureFormat, TextureUsages, TextureView,
-    TextureViewDescriptor, TextureViewDimension,
+    Adapter, Backends, CommandEncoder, CommandEncoderDescriptor, Device, DeviceDescriptor,
+    Instance, Operations, PowerPreference, PresentMode, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceTexture,
+    TextureAspect, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
+    TextureViewDimension,
 };
 mod painter;
 
 pub use wgpu;
-pub struct WgpuBackend {
+pub struct WgpuBackend<CustomData = ()> {
+    /// wgpu data
     pub instance: Instance,
-    pub adapter: Adapter,
-    pub device: Device,
-    pub queue: Queue,
+    pub adapter: Arc<Adapter>,
+    pub device: Arc<Device>,
+    pub queue: Arc<Queue>,
+    /// contains egui specific wgpu data like textures or buffers or pipelines etc..
     pub painter: EguiPainter,
     pub surface: Surface,
     pub surface_config: SurfaceConfiguration,
     pub surface_current_image: Option<SurfaceTexture>,
     pub surface_view: Option<TextureView>,
+    pub command_encoders: Vec<CommandEncoder>,
+    pub custom_data: CustomData,
 }
 
 #[derive(Debug, Default)]
-pub struct WgpuSettings {}
-impl GfxBackend for WgpuBackend {
-    type GfxBackendSettings = WgpuSettings;
+pub struct WgpuSettings<CustomData = ()> {
+    custom_data: CustomData,
+}
+impl<CustomData> GfxBackend for WgpuBackend<CustomData> {
+    type GfxBackendSettings = WgpuSettings<CustomData>;
 
     fn new(
         window_info_for_gfx: egui_backend::WindowInfoForGfx,
-        _settings: Self::GfxBackendSettings,
+        settings: Self::GfxBackendSettings,
     ) -> Self {
         assert!(
             window_info_for_gfx.opengl_context.is_none(),
@@ -38,12 +47,15 @@ impl GfxBackend for WgpuBackend {
         let instance = Instance::new(Backends::VULKAN);
         let surface = unsafe { instance.create_surface(&window_info_for_gfx) };
 
-        let adapter = block_on(instance.request_adapter(&RequestAdapterOptions {
-            power_preference: PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-        }))
-        .expect("failed to get adapter");
+        let adapter = Arc::new(
+            block_on(instance.request_adapter(&RequestAdapterOptions {
+                power_preference: PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: Some(&surface),
+            }))
+            .expect("failed to get adapter"),
+        );
+
         let (device, queue) = block_on(adapter.request_device(
             &DeviceDescriptor {
                 label: Some("my wgpu device"),
@@ -53,7 +65,11 @@ impl GfxBackend for WgpuBackend {
             Default::default(),
         ))
         .expect("failed to create wgpu device");
+
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
         let mut surface_format = None;
+        // only use Srgb formats
         for format in surface.get_supported_formats(&adapter) {
             match format {
                 TextureFormat::Rgba8UnormSrgb => surface_format = Some(format),
@@ -81,6 +97,8 @@ impl GfxBackend for WgpuBackend {
             surface_config,
             surface_view: None,
             surface_current_image: None,
+            custom_data: settings.custom_data,
+            command_encoders: Vec::new(),
         }
     }
 
@@ -122,7 +140,44 @@ impl GfxBackend for WgpuBackend {
         self.surface_current_image = Some(current_surface_image);
     }
 
+    fn prepare_render(&mut self, egui_gfx_output: egui_backend::EguiGfxOutput) {
+        self.painter
+            .upload_egui_data(&self.device, &self.queue, egui_gfx_output);
+    }
+
+    fn render(&mut self) {
+        let mut command_encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("egui command encoder"),
+            });
+        {
+            let mut egui_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("egui render pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: self
+                        .surface_view
+                        .as_ref()
+                        .expect("failed ot get surface view for egui render pass creation"),
+                    resolve_target: None,
+                    ops: Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: true,
+                    },
+                })],
+                depth_stencil_attachment: None,
+            });
+            self.painter.draw_egui(&mut egui_pass);
+        }
+        self.command_encoders.push(command_encoder);
+    }
+
     fn present(&mut self) {
+        self.queue.submit(
+            std::mem::take(&mut self.command_encoders)
+                .into_iter()
+                .map(|encoder| encoder.finish()),
+        );
         {
             self.surface_view
                 .take()
@@ -133,24 +188,4 @@ impl GfxBackend for WgpuBackend {
             .expect("failed to surface texture to preset")
             .present();
     }
-
-    fn prepare_render(&mut self, egui_gfx_output: egui_backend::EguiGfxOutput) {
-        let mut command_encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("egui command encoder"),
-            });
-        self.painter.draw_egui(
-            &self.device,
-            &self.queue,
-            egui_gfx_output,
-            &mut command_encoder,
-            self.surface_view.as_ref().unwrap(),
-            self.surface_config.width,
-            self.surface_config.height,
-        );
-        self.queue.submit(std::iter::once(command_encoder.finish()));
-    }
-
-    fn render(&mut self) {}
 }

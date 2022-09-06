@@ -20,11 +20,7 @@ impl UserApp<GlfwWindow, WgpuBackend> for App {
         _window_backend: &mut GlfwWindow,
         gfx_backend: &mut WgpuBackend,
     ) {
-        self.draw_triangle(
-            &gfx_backend.device,
-            &gfx_backend.queue,
-            gfx_backend.surface_view.as_ref().expect("no surface view"),
-        );
+        self.draw_triangle(gfx_backend);
         Window::new("egui user window").show(egui_context, |ui| {
             ui.label("hello");
             ui.label(format!("frame number: {}", self.frame_count));
@@ -70,27 +66,27 @@ impl App {
         }
     }
 
-    fn draw_triangle(&self, device: &Device, queue: &Queue, view: &wgpu::TextureView) {
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
-                        store: true,
-                    },
-                })],
-                depth_stencil_attachment: None,
-            });
-            rpass.set_pipeline(&self.pipeline);
-            rpass.draw(0..3, 0..1);
-        }
-
-        queue.submit(Some(encoder.finish()));
+    fn draw_triangle(&self, gfx_backend: &mut WgpuBackend) {
+        // let mut encoder = gfx_backend
+        //     .device
+        //     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        // {
+        //     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        //         label: None,
+        //         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        //             view: gfx_backend.surface_view.as_ref().unwrap(),
+        //             resolve_target: None,
+        //             ops: wgpu::Operations {
+        //                 load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+        //                 store: true,
+        //             },
+        //         })],
+        //         depth_stencil_attachment: None,
+        //     });
+        //     rpass.set_pipeline(&self.pipeline);
+        //     rpass.draw(0..3, 0..1);
+        // }
+        // gfx_backend.command_encoders.push(encoder);
     }
 }
 const TRIANGLE_SHADER_SRC: &str = r#"@vertex
