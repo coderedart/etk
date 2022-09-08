@@ -20,8 +20,8 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1
 
-      - name: Install dependencies # for bevy and mlua
-        run: sudo apt update && sudo apt install --no-install-recommends libsdl2-dev libglfw3-dev
+      - name: Install dependencies #  for sdl2, glfw and tao respectively
+        run: sudo apt update && sudo apt install --no-install-recommends libsdl2-dev libglfw3-dev libgtk-3-dev
 
       - name: Install checkmate
         run: cargo install cargo-checkmate
