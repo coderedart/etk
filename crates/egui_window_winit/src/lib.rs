@@ -6,6 +6,7 @@ use egui_backend::{
     raw_window_handle::HasRawWindowHandle,
     *,
 };
+use tracing::info;
 use winit::{event::MouseButton, window::WindowBuilder, *};
 use winit::{
     event::{ModifiersState, VirtualKeyCode},
@@ -144,7 +145,10 @@ impl WindowBackend for WinitBackend {
                 if let Some(debug) = debug {
                     context_builder = context_builder.with_gl_debug_flag(debug);
                 }
-                dbg!(&context_builder.pf_reqs, &context_builder.gl_attr);
+                info!(
+                    "pixel format requirements: {:#?}, gl attributes: {:#?}",
+                    &context_builder.pf_reqs, &context_builder.gl_attr
+                );
                 let windowed_context = context_builder
                     .build_windowed(window_builder, &el)
                     .expect("failed to build glutin window");
@@ -180,6 +184,10 @@ impl WindowBackend for WinitBackend {
                             debug,
                         },
                     };
+                    info!(
+                        "backend settings after window creation: {:#?}",
+                        &backend_settings
+                    );
 
                     gl_context = Some(opengl_context);
 

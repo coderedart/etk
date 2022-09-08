@@ -706,6 +706,7 @@ dependencies = [
  "getrandom",
  "glutin",
  "serde_json",
+ "tracing",
  "wasm-bindgen",
  "web-sys",
  "winit",

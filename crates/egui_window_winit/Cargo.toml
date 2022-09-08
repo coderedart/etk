@@ -10,12 +10,19 @@ description = "winit window integration for egui"
 [dependencies]
 egui_backend = { version = "0.1", path = "../egui_backend" }
 winit = { version = "0.27", features = [] }
-
+tracing = { version = "0.1.36" }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 glutin = { version = "0.29" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = {version = "0.2", features = ["serde-serialize"] }
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 serde_json = "1"
-web-sys = { version = "0.3", features = ['Document', 'HtmlCollection', 'HtmlCanvasElement', 'Window'] }
-getrandom = { version = "0.2", features = ["js"] } # https://github.com/emilk/egui/issues/2009
+web-sys = { version = "0.3", features = [
+    'Document',
+    'HtmlCollection',
+    'HtmlCanvasElement',
+    'Window',
+] }
+getrandom = { version = "0.2", features = [
+    "js",
+] } # https://github.com/emilk/egui/issues/2009
