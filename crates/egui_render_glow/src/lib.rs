@@ -23,11 +23,9 @@ pub struct GlowBackend {
     pub painter: Painter,
 }
 
-impl Drop for GlowBackend {
-    fn drop(&mut self) {
-        unsafe {
-            self.painter.destroy(&self.glow_context);
-        }
+impl GlowBackend {
+    pub unsafe fn destroy(&mut self) {
+        self.painter.destroy(&self.glow_context);
     }
 }
 
