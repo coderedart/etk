@@ -3,10 +3,11 @@
 //!
 //! this crate can provides 4 traits:
 //! 1. `WindowBackend`: implemented by window backends
-//! 2. `OpenGLWindowContext` : specific to openGL.
+//! 2. `OpenGLWindowContext` : specific to Native openGL. Window Backends which support OpengGL can implement this trait
 //! 3. `GfxBackend<W: WindowBackend>`: implemented by rendering backends for particular or any window backends
 //! 4. `UserApp<W: WindowBackend, G: GfxBackend>`: implemented by egui users for a particular combination or any combination of Window or Gfx Backends
 //!
+//! look at the docs of the relevant trait to learn more.
 //!
 //! WARNING:
 //! the primary goal was to separate window and rendering completely.
@@ -14,9 +15,11 @@
 //! but for opengl, window parts are often mixed with opengl parts.
 //! for example, opengl needs functions like `swap_buffers`, `make_context_current` or `get_proc_address` which are provided
 //! by the window crates like sdl2 / glfw / glutin. this is made complicated by multi-threading or the fact that opengl context
-//! is often created with a window etc..
+//! is often created with a window rather than a separate api etc..
 //!
-//! so, this turned out to be slighly more complex than i hoped for.
+//! If we remove support for OpenGL, we can simplify this crate A LOT.
+//! TODO: remove OpenGL into a separate crate / trait once webgpu spec is stable
+//! https://developer.chrome.com/en/docs/web-platform/webgpu/ origin trials of webgpu in chrome ends on 1st Feb, 2023.
 //!
 
 pub use egui;
@@ -27,29 +30,43 @@ use egui::{ClippedPrimitive, RawInput, TexturesDelta};
 pub use opengl::*;
 use raw_window_handle::HasRawWindowHandle;
 
-/// This configuration can be used by both Gfx and Window backends to set the right configuration
-/// OpenGL obviously has many more settings than vulkan as a lot of Window backends set these
-/// attributes at the time of window creation.
+/// Intended to provide a common struct which all window backends accept as their configuration.
+/// a lot of the settings are `Option<T>`, so that users can let the window backends choose defaults when user doesn't care.
 ///
+/// After the creation of a window, the backend must set all the options to `Some(T)`. for example, if the user set the
+/// srgb field of opengl options to `None`, and the backend must set that field to `Some(true)` or `Some(false)` so that the
+/// renderer can know whether the framebuffer (surface) supports srgb or not.
 #[derive(Debug, Clone, Default)]
 pub struct BackendSettings {
+    /// The kind of graphics api that we plan to use the window with
     pub gfx_api_type: GfxApiType,
 }
-
+/// Different kinds of gfx APIs and their relevant settings.
 #[derive(Debug, Clone)]
 pub enum GfxApiType {
+    /// when we want toe window to decide.
+    /// usually, this means that we don't want a opengl window and the renderer will choose the right api (vk/dx/mtl etc..)
     NoApi,
+    /// specifically request vulkan api. just like `NoApi`, it will avoid creation of an opengl context with the window.
+    /// people might choose vulkan specifically in certain situations (like transparent framebuffer)
+    #[cfg(not(target_arch = "wasm32"))]
     Vulkan,
+    /// Tell the window backend to create an OpenGL Window
+    /// lots of settings to choose from :)
     #[cfg(not(target_arch = "wasm32"))]
     OpenGL {
+        /// contains all the settings that are usually provided by a OpenGL window creation library
         native_config: NativeGlConfig,
     },
+    /// intended for WebGL2 + winit combinations. can be used by either wgpu or glow.
+    /// until webgpu is available in beta / stable, this is the only api available on web
     #[cfg(target_arch = "wasm32")]
     WebGL2 {
         /// only tested on winit atm
         /// if this is None, window backend will create a canvas and add it to DOM's body
         /// if this is Some(id), we will get the canvas element with this id and use it as the window's backing canvas.
         canvas_id: Option<String>,
+        /// settings to use during context creation from a canvas element.
         webgl_config: WebGlConfig,
     },
 }

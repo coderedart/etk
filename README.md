@@ -1,4 +1,9 @@
 # etk
 egui toolkit
 
-I am not completely sure if this is actually necessary. if i later find motivation, i might unarchive this.
+### Egui Backend
+The main purpose of the `egui_backend` crate is to provide traits which encapsulate the requirements of an egui backend.
+
+
+
+

@@ -1,24 +1,29 @@
 /// most window backends create the opengl context along with the window (glfw / sdl2) and we need some
 /// functions like SwapBuffers or MakeCurrent etc.. for rendering needs.
-/// Modern APIs like vulkan or Wgpu already deal with surface creation or swapping or multi-threading etc.. themselves.
+/// but not all window backends provide a proper "OpenGL Window Context" separate from the window object itself.
+/// so, instead of receiving some kind of `dyn OpenGLWindowContext`, we will just pass the window backend
+/// to the renderer for most functions and hope that the renderer can call the relevant functions.
 ///
+/// This ofcourse restricts multi-threaded rendering as you can't transfer a `&mut WindowBackend` to another thread safely.
+/// but opengl + multi-threading is a weird thing anyway.
 ///
+/// only available on native, as wasm renderers create the context themselves and browsers deal with the `swap_buffers` transparently.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait OpenGLWindowContext {
     /// Swaps buffers (swapchain) when we are using double buffering (99% of the time, double buffering is the default)
-    /// this also flushes the opengl commands and blocks until the swapchain image is presented.
+    /// this also flushes the opengl commands and blocks until the swapchain image is presented IF vsync is enabled.
     fn swap_buffers(&mut self);
     /// get openGL function addresses.
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void;
 }
 
-/// Native settings for OpenGL creation. preferably panic if the settings are not available
-/// taken care of by window backends
+/// Native settings for OpenGL creation.
+/// if the backend cannot create context with these settings, it **should** panic.
 /// after the creation of the window, the window backend **must** fill the options which are
-/// not set by the user.
+/// not set by the user but still provided by the backend by default.
 /// example:
-///     if user did not set the major or minor version. after creating window, the backend must
-///     get the version of opengl and set the relevant fields before passing this on to the rendering backend.
+///     if user did not set the depth bits. after creating window, the backend must
+///     get the depth bits and set the relevant option. this info will be utilized by the rendering backend.
 #[derive(Debug, Clone, Copy)]
 pub struct NativeGlConfig {
     /// major opengl version.
