@@ -15,4 +15,4 @@ wgpu = { version = "0.13", features = ["webgl"]}
 pollster = { version = "0.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom ={ version = "*", features = ["js"]} # because egui -> ahash issue https://github.com/emilk/egui/issues/2009
+getrandom ={ version = "0", features = ["js"]} # because egui -> ahash issue https://github.com/emilk/egui/issues/2009
