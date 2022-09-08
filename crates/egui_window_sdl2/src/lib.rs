@@ -2,10 +2,14 @@ use std::{path::PathBuf, str::FromStr};
 
 use egui::{Event, Key, Modifiers, PointerButton, RawInput};
 use egui_backend::{
-    egui, raw_window_handle::HasRawWindowHandle, EguiGfxOutput, GfxBackend, OpenGLWindowContext,
-    UserApp, WindowBackend, WindowInfoForGfx,
+    egui, raw_window_handle::HasRawWindowHandle, BackendSettings, EguiGfxOutput, GfxApiType,
+    GfxBackend, NativeGlConfig, OpenGLWindowContext, UserApp, WindowBackend,
 };
-use sdl2::{keyboard::Scancode, video::Window, Sdl};
+use sdl2::{
+    keyboard::Scancode,
+    video::{SwapInterval, Window},
+    Sdl,
+};
 
 pub struct SDL2Backend {
     pub sdl_context: Sdl,
@@ -16,32 +20,10 @@ pub struct SDL2Backend {
     pub cursor_pos_physical_pixels: [f32; 2],
     pub raw_input: RawInput,
     pub frame_events: Vec<sdl2::event::Event>,
+    pub gl_context: Option<sdl2::video::GLContext>,
     pub latest_resize_event: bool,
     pub should_close: bool,
-}
-pub struct SDL2OpenGLWindowContext {
-    window: sdl2::video::Window,
-    gl_context: sdl2::video::GLContext,
-}
-
-impl OpenGLWindowContext for SDL2OpenGLWindowContext {
-    fn swap_buffers(&mut self) {
-        self.window.gl_swap_window();
-    }
-
-    fn make_context_current(&mut self) {
-        self.window
-            .gl_set_context_to_current()
-            .expect("failed to set current context sdl2");
-    }
-
-    fn is_current(&mut self) -> bool {
-        self.gl_context.is_current()
-    }
-
-    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
-        self.window.subsystem().gl_get_proc_address(symbol) as *const core::ffi::c_void
-    }
+    pub backend_settings: BackendSettings,
 }
 
 #[derive(Debug)]
@@ -54,83 +36,110 @@ impl Default for SDL2Settings {
 impl WindowBackend for SDL2Backend {
     type Configuration = SDL2Settings;
 
-    fn new(
-        _config: Self::Configuration,
-        gfx_api_config: egui_backend::GfxApiConfig,
-    ) -> (Self, egui_backend::WindowInfoForGfx)
+    fn new(_config: Self::Configuration, backend_settings: BackendSettings) -> Self
     where
         Self: Sized,
     {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let attrs = video_subsystem.gl_attr();
-        match gfx_api_config {
-            egui_backend::GfxApiConfig::OpenGL {
-                version,
-                samples,
-                srgb,
-                transparent,
-                debug,
-            } => {
+        let mut swap_interval = None;
+        let mut opengl = false;
+        match backend_settings.gfx_api_type.clone() {
+            GfxApiType::OpenGL { native_config } => {
+                opengl = true;
+                let NativeGlConfig {
+                    major,
+                    minor,
+                    es,
+                    core,
+                    depth_bits,
+                    stencil_bits,
+                    samples,
+                    srgb,
+                    double_buffer,
+                    vsync,
+                    debug,
+                } = native_config;
+                swap_interval = vsync;
+                if let Some(value) = major {
+                    attrs.set_context_major_version(value);
+                }
+                if let Some(value) = minor {
+                    attrs.set_context_minor_version(value);
+                }
+                if let Some(value) = es {
+                    if value {
+                        attrs.set_context_profile(sdl2::video::GLProfile::GLES);
+                    }
+                }
+                if let Some(value) = core {
+                    if value {
+                        attrs.set_context_profile(sdl2::video::GLProfile::Core);
+                    } else {
+                        attrs.set_context_profile(sdl2::video::GLProfile::Compatibility);
+                    }
+                }
+                if let Some(value) = depth_bits {
+                    attrs.set_depth_size(value);
+                }
+                if let Some(value) = stencil_bits {
+                    attrs.set_stencil_size(value);
+                }
+                if let Some(value) = samples {
+                    attrs.set_multisample_samples(value);
+                }
+                if let Some(value) = srgb {
+                    attrs.set_framebuffer_srgb_compatible(value);
+                }
+                if let Some(value) = double_buffer {
+                    attrs.set_double_buffer(value);
+                }
+
                 if let Some(debug) = debug {
                     if debug {
                         attrs.set_context_flags().debug().set();
                     }
                 }
-                if let Some((major, minor)) = version {
-                    attrs.set_context_version(major, minor);
-                }
-                if let Some(samples) = samples {
-                    attrs.set_multisample_samples(samples);
-                }
-                if let Some(srgb) = srgb {
-                    attrs.set_framebuffer_srgb_compatible(srgb);
-                }
-                if let Some(transparent) = transparent {
-                    assert!(!transparent, "transparency is not supported in sdl2");
-                }
             }
-            egui_backend::GfxApiConfig::Vulkan {} => {}
-            _ => todo!(),
+            GfxApiType::NoApi => {}
+            GfxApiType::Vulkan => {}
         }
 
         let mut window_builder = video_subsystem.window("rust-sdl2 demo", 800, 600);
-        match gfx_api_config {
-            egui_backend::GfxApiConfig::OpenGL { .. } => {
+        match backend_settings.gfx_api_type.clone() {
+            GfxApiType::OpenGL { .. } => {
                 window_builder.opengl();
             }
-            egui_backend::GfxApiConfig::Vulkan { .. } => {
+            GfxApiType::Vulkan => {
                 window_builder.vulkan();
             }
-            _ => todo!(),
+            _ => {}
         }
         window_builder.allow_highdpi();
         window_builder.resizable();
         let window = window_builder.build().expect("failed to create a window");
-        let opengl_window_context = match gfx_api_config {
-            egui_backend::GfxApiConfig::OpenGL { .. } => {
-                let gl_context = window
-                    .gl_create_context()
-                    .expect("failed to create opengl context");
-                window
-                    .gl_make_current(&gl_context)
-                    .expect("failed to make context current");
-                let window_context = window.context();
-                // window must outlive the original window
-                let window = unsafe { sdl2::video::Window::from_ref(window_context) };
-                let result: Box<dyn OpenGLWindowContext> =
-                    Box::new(SDL2OpenGLWindowContext { window, gl_context });
-                Some(result)
-            }
-            _ => None,
-        };
-        let window_info_for_gfx = WindowInfoForGfx {
-            gfx_api_config,
-            window_handle: window.raw_window_handle(),
-            opengl_context: opengl_window_context,
-        };
         let event_pump = sdl_context.event_pump().expect("failed to get event pump");
-
+        let mut gl_context = None;
+        if opengl {
+            gl_context = Some(
+                window
+                    .gl_create_context()
+                    .expect("failed ot create opengl context"),
+            );
+            window
+                .gl_make_current(&gl_context.as_ref().unwrap())
+                .expect("failed to make gl context current");
+            if let Some(value) = swap_interval {
+                video_subsystem
+                    .gl_set_swap_interval(if value {
+                        SwapInterval::VSync
+                    } else {
+                        SwapInterval::Immediate
+                    })
+                    .expect("failed to set vsync option");
+            }
+        }
         let mouse_state = event_pump.relative_mouse_state();
         let cursor_pos_physical_pixels = [mouse_state.x() as f32, mouse_state.y() as f32];
         // display dpi shows 101.6 on my normal monitor.. and docs of sdl state that this is unreliable
@@ -154,21 +163,20 @@ impl WindowBackend for SDL2Backend {
             pixels_per_point: Some(scale[0]),
             ..Default::default()
         };
-        (
-            Self {
-                sdl_context,
-                window,
-                size_physical_pixels,
-                scale,
-                cursor_pos_physical_pixels,
-                raw_input,
-                frame_events: Vec::new(),
-                latest_resize_event: true,
-                event_pump,
-                should_close: false,
-            },
-            window_info_for_gfx,
-        )
+        Self {
+            sdl_context,
+            window,
+            size_physical_pixels,
+            scale,
+            cursor_pos_physical_pixels,
+            raw_input,
+            frame_events: Vec::new(),
+            latest_resize_event: true,
+            event_pump,
+            should_close: false,
+            gl_context,
+            backend_settings,
+        }
     }
 
     fn take_raw_input(&mut self) -> egui::RawInput {
@@ -186,7 +194,7 @@ impl WindowBackend for SDL2Backend {
         }
     }
 
-    fn run_event_loop<G: GfxBackend, U: UserApp<Self, G>>(
+    fn run_event_loop<G: GfxBackend<Self>, U: UserApp<Self, G>>(
         mut self,
         mut gfx_backend: G,
         mut user_app: U,
@@ -215,14 +223,12 @@ impl WindowBackend for SDL2Backend {
                     self.size_physical_pixels[0] as f32 / self.scale[0],
                     self.size_physical_pixels[1] as f32 / self.scale[0],
                 ],
-                framebuffer_size_physical: self.size_physical_pixels,
-                scale: self.scale[0],
             };
             // render egui with gfx backend
             gfx_backend.prepare_render(gfx_output);
             gfx_backend.render();
             // present the frame and loop back
-            gfx_backend.present();
+            gfx_backend.present(&mut self);
         }
     }
 
@@ -232,8 +238,25 @@ impl WindowBackend for SDL2Backend {
         self.size_physical_pixels = [size.0, size.1];
         self.size_physical_pixels
     }
-}
 
+    fn get_settings(&self) -> &BackendSettings {
+        &self.backend_settings
+    }
+}
+impl OpenGLWindowContext for SDL2Backend {
+    fn swap_buffers(&mut self) {
+        self.window.gl_swap_window();
+    }
+
+    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
+        self.window.subsystem().gl_get_proc_address(symbol) as *const core::ffi::c_void
+    }
+}
+unsafe impl HasRawWindowHandle for SDL2Backend {
+    fn raw_window_handle(&self) -> egui_backend::raw_window_handle::RawWindowHandle {
+        self.window.raw_window_handle()
+    }
+}
 impl SDL2Backend {
     pub fn tick(&mut self) {
         self.frame_events.clear();

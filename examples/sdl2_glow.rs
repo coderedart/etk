@@ -1,5 +1,5 @@
 use egui::Window;
-use egui_backend::{GfxApiConfig, GfxBackend, UserApp, WindowBackend};
+use egui_backend::{GfxApiType, GfxBackend, UserApp, WindowBackend};
 use egui_render_glow::{glow::HasContext, *};
 use egui_window_sdl2::*;
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
@@ -41,17 +41,15 @@ fn main() {
         .init();
 
     let config = Default::default();
-    let (window_backend, window_info_for_gfx) = SDL2Backend::new(
+    let mut window_backend = SDL2Backend::new(
         config,
-        GfxApiConfig::OpenGL {
-            version: Some((3, 0)),
-            samples: None,
-            srgb: Some(true),
-            transparent: None,
-            debug: None,
+        egui_backend::BackendSettings {
+            gfx_api_type: GfxApiType::OpenGL {
+                native_config: Default::default(),
+            },
         },
     );
-    let glow_backend = GlowBackend::new(window_info_for_gfx, ());
+    let glow_backend = GlowBackend::new(&mut window_backend, ());
     let app = App::new(&glow_backend);
     window_backend.run_event_loop(glow_backend, app);
 }

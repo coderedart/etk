@@ -1,5 +1,5 @@
 use egui::Window;
-use egui_backend::{GfxApiConfig, GfxBackend, UserApp, WindowBackend};
+use egui_backend::{BackendSettings, GfxApiType, GfxBackend, UserApp, WindowBackend};
 use egui_render_wgpu::*;
 use egui_window_sdl2::*;
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
@@ -35,8 +35,13 @@ fn main() {
         .init();
 
     let config = Default::default();
-    let (window_backend, window_info_for_gfx) = SDL2Backend::new(config, GfxApiConfig::Vulkan {});
-    let gfx_backend = WgpuBackend::new(window_info_for_gfx, Default::default());
+    let mut window_backend = SDL2Backend::new(
+        config,
+        BackendSettings {
+            gfx_api_type: GfxApiType::Vulkan,
+        },
+    );
+    let gfx_backend = WgpuBackend::new(&mut window_backend, Default::default());
     let app = App::new(&gfx_backend);
     window_backend.run_event_loop(gfx_backend, app);
 }

@@ -5,10 +5,10 @@ use painter::EguiPainter;
 use pollster::block_on;
 use wgpu::{
     Adapter, Backends, CommandEncoder, CommandEncoderDescriptor, Device, DeviceDescriptor,
-    Instance, LoadOp, Operations, PowerPreference, PresentMode, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceTexture,
-    TextureAspect, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
-    TextureViewDimension,
+    Instance, Limits, LoadOp, Operations, PowerPreference, PresentMode, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions, Surface,
+    SurfaceConfiguration, SurfaceTexture, TextureAspect, TextureFormat, TextureUsages, TextureView,
+    TextureViewDescriptor, TextureViewDimension,
 };
 pub mod painter;
 pub use wgpu;
@@ -29,23 +29,47 @@ pub struct WgpuBackend {
 
 #[derive(Debug, Default)]
 pub struct WgpuSettings {}
-impl GfxBackend for WgpuBackend {
-    type GfxBackendSettings = WgpuSettings;
+impl<W: WindowBackend> GfxBackend<W> for WgpuBackend {
+    type Configuration = WgpuSettings;
 
-    fn new(
-        window_info_for_gfx: egui_backend::WindowInfoForGfx,
-        _settings: Self::GfxBackendSettings,
-    ) -> Self {
-        assert!(
-            window_info_for_gfx.opengl_context.is_none(),
-            "wgpu backend received opengl window context"
-        );
-        let instance = Instance::new(Backends::VULKAN);
-        let surface = unsafe { instance.create_surface(&window_info_for_gfx) };
+    fn new(window_backend: &mut W, _config: Self::Configuration) -> Self {
+        let mut backend = Backends::all();
+        #[cfg(not(target_arch = "wasm32"))]
+        match window_backend.get_settings().gfx_api_type {
+            egui_backend::GfxApiType::NoApi => {}
+            egui_backend::GfxApiType::OpenGL { .. } => {
+                unimplemented!("native opengl wgpu backend is not supported by egui painter")
+            }
+            egui_backend::GfxApiType::Vulkan => backend = Backends::VULKAN,
+        }
+        #[cfg(target_arch = "wasm32")]
+        let webgl_config = match window_backend.get_settings().gfx_api_type.clone() {
+            egui_backend::GfxApiType::WebGL2 {
+                canvas_id: _,
+                webgl_config,
+            } => webgl_config,
+            _ => {
+                unimplemented!("wgpu on web only supports webgl backend")
+            }
+        };
+        let instance = Instance::new(backend);
+        let surface = unsafe { instance.create_surface(window_backend) };
 
+        let power_preference = PowerPreference::default();
+        #[cfg(target_arch = "wasm32")]
+        let power_preference = match webgl_config.low_power {
+            Some(low_power) => {
+                if low_power {
+                    PowerPreference::LowPower
+                } else {
+                    PowerPreference::HighPerformance
+                }
+            }
+            None => PowerPreference::default(),
+        };
         let adapter = Arc::new(
             block_on(instance.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::default(),
+                power_preference,
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
             }))
@@ -56,7 +80,10 @@ impl GfxBackend for WgpuBackend {
             &DeviceDescriptor {
                 label: Some("my wgpu device"),
                 features: Default::default(),
-                limits: Default::default(),
+                #[cfg(target_arch = "wasm32")]
+                limits: Limits::downlevel_webgl2_defaults(),
+                #[cfg(not(target_arch = "wasm32"))]
+                limits: Limits::default(),
             },
             Default::default(),
         ))
@@ -97,11 +124,7 @@ impl GfxBackend for WgpuBackend {
         }
     }
 
-    fn prepare_frame<W: WindowBackend>(
-        &mut self,
-        framebuffer_size_update: Option<[u32; 2]>,
-        window_backend: &mut W,
-    ) {
+    fn prepare_frame(&mut self, framebuffer_size_update: Option<[u32; 2]>, window_backend: &mut W) {
         if let Some(size) = framebuffer_size_update {
             self.surface_config.width = size[0];
             self.surface_config.height = size[1];
@@ -136,8 +159,12 @@ impl GfxBackend for WgpuBackend {
     }
 
     fn prepare_render(&mut self, egui_gfx_output: egui_backend::EguiGfxOutput) {
-        self.painter
-            .upload_egui_data(&self.device, &self.queue, egui_gfx_output);
+        self.painter.upload_egui_data(
+            &self.device,
+            &self.queue,
+            egui_gfx_output,
+            [self.surface_config.width, self.surface_config.height],
+        );
     }
 
     fn render(&mut self) {
@@ -167,7 +194,7 @@ impl GfxBackend for WgpuBackend {
         self.command_encoders.push(command_encoder);
     }
 
-    fn present(&mut self) {
+    fn present(&mut self, _window_backend: &mut W) {
         self.queue.submit(
             std::mem::take(&mut self.command_encoders)
                 .into_iter()

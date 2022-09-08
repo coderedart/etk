@@ -117,7 +117,9 @@ impl EguiPainter {
                 } => {
                     let [x, y, width, height] = clip_rect;
                     rpass.set_scissor_rect(x, y, width, height);
-
+                    // because webgl : Draw elements base vertex is not supported
+                    // we can't use base_vertex argument of draw_indexed. we will make sure that bound vertex buffer starts from base_vertex at zero.
+                    rpass.set_vertex_buffer(0, self.vb.slice(base_vertex as u64 * 20..));
                     match texture_id {
                         TextureId::Managed(key) => {
                             rpass.set_bind_group(
@@ -132,7 +134,7 @@ impl EguiPainter {
                         }
                         TextureId::User(_) => unimplemented!(),
                     }
-                    rpass.draw_indexed(index_start..index_end, base_vertex, 0..1);
+                    rpass.draw_indexed(index_start..index_end, 0, 0..1);
                 }
                 EguiDrawCalls::Callback {
                     clip_rect,
@@ -160,10 +162,14 @@ impl EguiPainter {
         }
     }
     pub fn new(dev: &Device, surface_format: TextureFormat) -> Self {
+        assert!(
+            surface_format.describe().srgb,
+            "egui wgpu only supports srgb compatible framebuffer"
+        );
         // create uniform buffer for screen size
         let screen_size_buffer = dev.create_buffer(&BufferDescriptor {
             label: Some("screen size uniform buffer"),
-            size: 8,
+            size: 16,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -386,10 +392,10 @@ impl EguiPainter {
             meshes,
             textures_delta,
             screen_size_logical,
-            framebuffer_size_physical: screen_size_physical,
-            scale,
         }: EguiGfxOutput,
+        screen_size_physical: [u32; 2],
     ) {
+        let scale = screen_size_physical[0] as f32 / screen_size_logical[0];
         self.draw_calls.clear();
         // first deal with textures
         {
@@ -567,7 +573,7 @@ pub const SCREEN_SIZE_UNIFORM_BUFFER_BINDGROUP_ENTRY: [BindGroupLayoutEntry; 1] 
         ty: BindingType::Buffer {
             ty: BufferBindingType::Uniform,
             has_dynamic_offset: false,
-            min_binding_size: NonZeroU64::new(8),
+            min_binding_size: NonZeroU64::new(16),
         },
         count: None,
     }];

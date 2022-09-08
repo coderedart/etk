@@ -11,3 +11,10 @@ glow = { version = "0.11" }
 egui_backend = { version = "0.1", path = "../egui_backend" , features = ["egui_bytemuck"]}
 intmap = { version = "2" }
 bytemuck = { version = "1" }
+tracing = {version = "0"}
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2" }
+web-sys = { version = "0.3", features = ["Window", "HtmlCanvasElement", "WebGl2RenderingContext"] }
+js-sys = { version = "0.3" }
+getrandom = { version = "0.2", features = ["js"] } # used by ahash

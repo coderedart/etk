@@ -1,19 +1,20 @@
 use egui::{Event, Key, PointerButton, Pos2, RawInput};
 use egui_backend::raw_window_handle::HasRawWindowHandle;
-use egui_backend::GfxApiConfig;
 use egui_backend::WindowBackend;
 use egui_backend::*;
 use glfw::Action;
 use glfw::ClientApiHint;
 use glfw::Context;
 use glfw::Glfw;
-use glfw::RenderContext;
+use glfw::OpenGlProfileHint;
+use glfw::SwapInterval;
 use glfw::WindowEvent;
+use glfw::WindowHint;
 use std::sync::mpsc::Receiver;
 
 pub use glfw;
 
-pub struct GlfwWindow {
+pub struct GlfwBackend {
     pub glfw: glfw::Glfw,
     pub events_receiver: Receiver<(f64, WindowEvent)>,
     pub window: glfw::Window,
@@ -23,34 +24,22 @@ pub struct GlfwWindow {
     pub raw_input: RawInput,
     pub frame_events: Vec<WindowEvent>,
     pub resized_event_pending: bool,
+    pub backend_settings: BackendSettings,
 }
 
-unsafe impl HasRawWindowHandle for GlfwWindow {
+unsafe impl HasRawWindowHandle for GlfwBackend {
     fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
         self.window.raw_window_handle()
     }
 }
 
-pub struct GlfwOpenGLWindowContext {
-    pub render_context: RenderContext,
-    pub glfw_context: Glfw,
-}
-
-impl OpenGLWindowContext for GlfwOpenGLWindowContext {
+impl OpenGLWindowContext for GlfwBackend {
     fn swap_buffers(&mut self) {
-        self.render_context.swap_buffers()
-    }
-
-    fn make_context_current(&mut self) {
-        self.render_context.make_current();
-    }
-
-    fn is_current(&mut self) -> bool {
-        self.render_context.is_current()
+        self.window.swap_buffers()
     }
 
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
-        self.glfw_context.get_proc_address_raw(symbol)
+        self.window.get_proc_address(symbol)
     }
 }
 
@@ -61,48 +50,80 @@ pub struct GlfwConfig {
     /// This callback is called with `&mut Glfw` right after `Glfw` is created
     pub glfw_callback: Option<Box<dyn FnOnce(&mut Glfw)>>,
 }
-impl WindowBackend for GlfwWindow {
+impl WindowBackend for GlfwBackend {
     type Configuration = GlfwConfig;
 
-    fn new(config: Self::Configuration, gfx_api_config: GfxApiConfig) -> (Self, WindowInfoForGfx) {
+    fn new(config: Self::Configuration, backend_settings: BackendSettings) -> Self {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
         if let Some(glfw_callback) = config.glfw_callback {
             glfw_callback(&mut glfw_context);
         }
+        let mut swap_interval = None;
+        let mut opengl = false;
         // set hints based on gfx api config
-        match gfx_api_config {
-            GfxApiConfig::OpenGL {
-                version,
-                samples,
-                srgb,
-                transparent,
-                debug,
-            } => {
-                if let Some(version) = version {
-                    glfw_context.window_hint(glfw::WindowHint::ContextVersion(
-                        version.0.into(),
-                        version.1.into(),
-                    ));
+        match backend_settings.gfx_api_type.clone() {
+            GfxApiType::OpenGL { native_config } => {
+                opengl = true;
+                let NativeGlConfig {
+                    major,
+                    minor,
+                    es,
+                    core,
+                    depth_bits,
+                    stencil_bits,
+                    samples,
+                    srgb,
+                    double_buffer,
+                    vsync,
+                    debug,
+                } = native_config;
+                if let Some(major) = major {
+                    glfw_context.window_hint(WindowHint::ContextVersionMajor(major.into()));
+                }
+                if let Some(value) = minor {
+                    glfw_context.window_hint(WindowHint::ContextVersionMinor(value.into()));
+                }
+                if let Some(value) = es {
+                    glfw_context.window_hint(WindowHint::ClientApi(if value {
+                        ClientApiHint::OpenGlEs
+                    } else {
+                        ClientApiHint::OpenGl
+                    }));
+                }
+                if let Some(value) = core {
+                    glfw_context.window_hint(WindowHint::OpenGlProfile(if value {
+                        glfw::OpenGlProfileHint::Core
+                    } else {
+                        OpenGlProfileHint::Compat
+                    }));
                 }
 
-                if let Some(transparent) = transparent {
-                    glfw_context.window_hint(glfw::WindowHint::TransparentFramebuffer(transparent));
-                }
-                if let Some(debug) = debug {
-                    glfw_context.window_hint(glfw::WindowHint::OpenGlDebugContext(debug));
-                }
+                glfw_context.window_hint(WindowHint::DepthBits(depth_bits.map(Into::into)));
+
+                glfw_context.window_hint(WindowHint::StencilBits(stencil_bits.map(Into::into)));
+
                 if let Some(srgb) = srgb {
-                    glfw_context.window_hint(glfw::WindowHint::SRgbCapable(srgb));
+                    glfw_context.window_hint(WindowHint::SRgbCapable(srgb));
                 }
                 if let Some(samples) = samples {
-                    glfw_context.window_hint(glfw::WindowHint::Samples(Some(samples as u32)));
+                    glfw_context.window_hint(WindowHint::Samples(Some(samples as u32)));
+                }
+                if let Some(value) = double_buffer {
+                    glfw_context.window_hint(WindowHint::DoubleBuffer(value.into()));
+                }
+                swap_interval = vsync;
+
+                if let Some(debug) = debug {
+                    glfw_context.window_hint(WindowHint::OpenGlDebugContext(debug));
                 }
             }
-            GfxApiConfig::Vulkan { .. } => {
-                glfw_context.window_hint(glfw::WindowHint::ClientApi(ClientApiHint::NoApi));
+            GfxApiType::NoApi => {
+                glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
             }
-            _ => panic!("gfx api type not recognized"),
+            GfxApiType::Vulkan => {
+                glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
+            }
         }
         // create a window
         let (mut window, events_receiver) = glfw_context
@@ -111,6 +132,17 @@ impl WindowBackend for GlfwWindow {
         // set which events you care about
         window.set_all_polling(true);
         window.set_store_lock_key_mods(true);
+        if opengl {
+            window.make_current();
+
+            if let Some(value) = swap_interval {
+                glfw_context.set_swap_interval(if value {
+                    SwapInterval::Sync(1)
+                } else {
+                    SwapInterval::None
+                });
+            }
+        }
         // collect details and keep them updated
         let (width, height) = window.get_framebuffer_size();
         let scale = window.get_content_scale();
@@ -127,35 +159,18 @@ impl WindowBackend for GlfwWindow {
             [width as f32, height as f32].into(),
         ]));
         raw_input.pixels_per_point = Some(scale.0);
-        // collect opengl window context stuff to give to renderers
-        let opengl_context: Option<Box<dyn OpenGLWindowContext>> = match gfx_api_config {
-            GfxApiConfig::OpenGL { .. } => Some(Box::new(GlfwOpenGLWindowContext {
-                render_context: window.render_context(),
-                glfw_context: glfw_context.clone(),
-            })),
-            GfxApiConfig::Vulkan {} => None,
-            _ => todo!(),
-        };
-        // create info needed for gfx renderers
-        let window_info_for_gfx = WindowInfoForGfx {
-            gfx_api_config: gfx_api_config.clone(),
-            window_handle: window.raw_window_handle(),
-            opengl_context,
-        };
-        (
-            Self {
-                glfw: glfw_context,
-                events_receiver,
-                window,
-                size_physical_pixels,
-                scale: [scale.0, scale.1],
-                cursor_pos_physical_pixels: [cursor_position.0 as f32, cursor_position.1 as f32],
-                raw_input,
-                frame_events: vec![],
-                resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
-            },
-            window_info_for_gfx,
-        )
+        Self {
+            glfw: glfw_context,
+            events_receiver,
+            window,
+            size_physical_pixels,
+            scale: [scale.0, scale.1],
+            cursor_pos_physical_pixels: [cursor_position.0 as f32, cursor_position.1 as f32],
+            raw_input,
+            frame_events: vec![],
+            resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
+            backend_settings,
+        }
     }
 
     fn take_raw_input(&mut self) -> RawInput {
@@ -173,7 +188,7 @@ impl WindowBackend for GlfwWindow {
         }
     }
 
-    fn run_event_loop<G: GfxBackend, U: UserApp<Self, G>>(
+    fn run_event_loop<G: GfxBackend<Self>, U: UserApp<Self, G>>(
         mut self,
         mut gfx_backend: G,
         mut user_app: U,
@@ -202,14 +217,12 @@ impl WindowBackend for GlfwWindow {
                     self.size_physical_pixels[0] as f32 / self.scale[0],
                     self.size_physical_pixels[1] as f32 / self.scale[0],
                 ],
-                framebuffer_size_physical: self.size_physical_pixels,
-                scale: self.scale[0],
             };
             // render egui with gfx backend
             gfx_backend.prepare_render(gfx_output);
             gfx_backend.render();
             // present the frame and loop back
-            gfx_backend.present();
+            gfx_backend.present(&mut self);
         }
     }
 
@@ -218,9 +231,13 @@ impl WindowBackend for GlfwWindow {
         self.size_physical_pixels = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
         self.size_physical_pixels
     }
+
+    fn get_settings(&self) -> &BackendSettings {
+        &self.backend_settings
+    }
 }
 
-impl GlfwWindow {
+impl GlfwBackend {
     pub fn tick(&mut self) {
         self.glfw.poll_events();
         self.frame_events.clear();

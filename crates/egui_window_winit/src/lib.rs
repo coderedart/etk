@@ -1,119 +1,150 @@
+use std::convert::TryInto;
+
 use egui::Event;
 use egui_backend::{
     egui::{DroppedFile, Key, Modifiers, RawInput, Rect},
     raw_window_handle::HasRawWindowHandle,
     *,
 };
+use winit::{event::MouseButton, window::WindowBuilder, *};
 use winit::{
     event::{ModifiersState, VirtualKeyCode},
     event_loop::{ControlFlow, EventLoop},
 };
-use winit::{window::WindowBuilder, *};
 
-#[derive(Debug, Default)]
-pub struct WinitSettings {}
-
+/// settings that you provide to winit backend
+#[derive(Debug)]
+pub struct WinitSettings {
+    /// window title
+    pub title: String,
+    /// on web: winit will try to get the canvas element with this id attribute and use it as the window's context
+    /// for now, it must not be empty. we can later provide options like creating a canvas ourselves and adding it to dom
+    /// defualt value is : `egui_winit_canvas`
+    /// so, make sure there's a canvas element in html body with this id
+    pub dom_element_id: String,
+}
+impl Default for WinitSettings {
+    fn default() -> Self {
+        Self {
+            title: "egui winit window".to_string(),
+            dom_element_id: "egui_winit_canvas".to_string(),
+        }
+    }
+}
+/// This is the winit WindowBackend for egui
 pub struct WinitBackend {
+    /// we want to take out the event loop when we call the  `WindowBackend::run_event_loop` fn
+    /// so, this will always be `None` once we start the event loop
     pub event_loop: Option<EventLoop<()>>,
+    /// the winit window
     pub window: winit::window::Window,
+    /// current modifiers state
     pub modifiers: egui::Modifiers,
+    /// frame buffer size in physical pixels
     pub framebuffer_size: [u32; 2],
+    /// scale
     pub scale: f32,
+    /// cusor position in logical pixels
     pub cursor_pos_logical: [f32; 2],
+    /// input for egui's begin_frame
     pub raw_input: RawInput,
+    /// all current frame's events will be stored in this vec
     pub frame_events: Vec<winit::event::Event<'static, ()>>,
+    /// should be true if there's been a resize event
+    /// should be set to false once the renderer takes the latest size during `GfxBackend::prepare_frame`
     pub latest_resize_event: bool,
+    /// ???
     pub should_close: bool,
+    pub backend_settings: BackendSettings,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub gl_context: Option<glutin::ContextWrapper<glutin::PossiblyCurrent, ()>>,
 }
 
-pub enum CurrentOrNot {
-    Current(glutin::ContextWrapper<glutin::PossiblyCurrent, ()>),
-    NotCurrent(glutin::ContextWrapper<glutin::NotCurrent, ()>),
-}
-pub struct WinitOpenGLContext {
-    context: Option<CurrentOrNot>,
-}
-impl OpenGLWindowContext for WinitOpenGLContext {
-    fn swap_buffers(&mut self) {
-        match self.context.as_ref().expect("context wrapper missing") {
-            CurrentOrNot::Current(ref ctx) => {
-                ctx.swap_buffers().expect("failed to swap buffers");
-            }
-            CurrentOrNot::NotCurrent(_) => todo!(),
-        }
-    }
-
-    fn make_context_current(&mut self) {
-        unsafe {
-            self.context = Some(
-                match self.context.take().expect("context wrapper missing") {
-                    CurrentOrNot::Current(ctx) => CurrentOrNot::Current(ctx),
-                    CurrentOrNot::NotCurrent(c) => {
-                        CurrentOrNot::Current(c.make_current().expect("failed to make current"))
-                    }
-                },
-            )
-        }
-    }
-
-    fn is_current(&mut self) -> bool {
-        match self.context.as_ref().expect("context wrapper missing") {
-            CurrentOrNot::Current(_) => true,
-            CurrentOrNot::NotCurrent(_) => false,
-        }
-    }
-
-    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
-        match self.context.as_ref().expect("context wrapper missing") {
-            CurrentOrNot::Current(ref ctx) => ctx.get_proc_address(symbol),
-            CurrentOrNot::NotCurrent(_) => {
-                panic!("cannot use get_proc_address() when context not current")
-            }
-        }
-    }
-}
 impl WindowBackend for WinitBackend {
     type Configuration = WinitSettings;
-
-    fn new(_config: Self::Configuration, gfx_api_config: GfxApiConfig) -> (Self, WindowInfoForGfx)
+    fn new(_config: Self::Configuration, mut backend_settings: BackendSettings) -> Self
     where
         Self: Sized,
     {
         let el = EventLoop::new();
+        #[allow(unused_mut)]
         let mut window_builder = WindowBuilder::new().with_resizable(true);
-        if let GfxApiConfig::OpenGL {
-            transparent: Some(t),
-            ..
-        } = gfx_api_config
-        {
-            window_builder = window_builder.with_transparent(t);
-        }
-
-        let (window, opengl_context) = match gfx_api_config {
-            GfxApiConfig::OpenGL {
-                version,
-                samples,
-                srgb,
-                transparent,
-                debug,
-            } => {
-                let _ = transparent;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut gl_context = None;
+        let window = match backend_settings.gfx_api_type.clone() {
+            #[cfg(not(target_arch = "wasm32"))]
+            GfxApiType::OpenGL { native_config } => {
+                let NativeGlConfig {
+                    major,
+                    minor,
+                    es,
+                    core,
+                    depth_bits,
+                    stencil_bits,
+                    samples,
+                    srgb,
+                    double_buffer,
+                    vsync,
+                    debug,
+                } = native_config;
                 let mut context_builder = glutin::ContextBuilder::new();
 
-                if let Some(version) = version {
-                    context_builder = context_builder
-                        .with_gl(glutin::GlRequest::Specific(glutin::Api::OpenGl, version))
+                if let Some(es) = es {
+                    if let Some(major) = major {
+                        context_builder = context_builder.with_gl(glutin::GlRequest::Specific(
+                            if es {
+                                glutin::Api::OpenGlEs
+                            } else {
+                                glutin::Api::OpenGl
+                            },
+                            (major, minor.unwrap_or_default()),
+                        ));
+                    } else {
+                        context_builder = context_builder.with_gl(glutin::GlRequest::Specific(
+                            if es {
+                                glutin::Api::OpenGlEs
+                            } else {
+                                glutin::Api::OpenGl
+                            },
+                            (major.unwrap_or(3), minor.unwrap_or_default()),
+                        ));
+                    }
+                } else {
+                    if let Some(major) = major {
+                        context_builder = context_builder.with_gl(glutin::GlRequest::Specific(
+                            glutin::Api::OpenGl,
+                            (major, minor.unwrap_or_default()),
+                        ));
+                    }
+                }
+                if let Some(value) = core {
+                    context_builder = context_builder.with_gl_profile(if value {
+                        glutin::GlProfile::Core
+                    } else {
+                        glutin::GlProfile::Compatibility
+                    });
+                }
+                if let Some(value) = depth_bits {
+                    context_builder = context_builder.with_depth_buffer(value);
+                }
+                if let Some(value) = stencil_bits {
+                    context_builder = context_builder.with_stencil_buffer(value);
                 }
                 if let Some(samples) = samples {
                     context_builder = context_builder.with_multisampling(samples.into());
                 }
-                if let Some(debug) = debug {
-                    context_builder = context_builder.with_gl_debug_flag(debug);
-                }
                 if let Some(srgb) = srgb {
                     context_builder = context_builder.with_srgb(srgb);
                 }
+                context_builder = context_builder.with_double_buffer(double_buffer);
 
+                if let Some(value) = vsync {
+                    context_builder = context_builder.with_vsync(value);
+                }
+                if let Some(debug) = debug {
+                    context_builder = context_builder.with_gl_debug_flag(debug);
+                }
+                dbg!(&context_builder.pf_reqs, &context_builder.gl_attr);
                 let windowed_context = context_builder
                     .build_windowed(window_builder, &el)
                     .expect("failed to build glutin window");
@@ -122,27 +153,81 @@ impl WindowBackend for WinitBackend {
                         .make_current()
                         .expect("failed to make glutin window current");
                     let (opengl_context, window) = windowed_context.split();
+                    // start setting the options in backend settings
+                    let pixel_format = opengl_context.get_pixel_format();
+                    let api = opengl_context.get_api();
+                    backend_settings.gfx_api_type = GfxApiType::OpenGL {
+                        native_config: NativeGlConfig {
+                            major,
+                            minor,
+                            es: match api {
+                                glutin::Api::OpenGl => Some(false),
+                                glutin::Api::OpenGlEs => Some(true),
+                                glutin::Api::WebGl => {
+                                    unreachable!(" why would we get webgl on native opengl ???")
+                                }
+                            },
+                            core,
+                            depth_bits: Some(pixel_format.depth_bits),
+                            stencil_bits: Some(pixel_format.stencil_bits),
+                            samples: pixel_format.multisampling.map(|ms| {
+                                ms.try_into()
+                                    .expect("failed ot fit number of samples in u8")
+                            }),
+                            srgb: Some(pixel_format.srgb),
+                            double_buffer: Some(pixel_format.double_buffer),
+                            vsync,
+                            debug,
+                        },
+                    };
 
-                    let ctx: Box<dyn OpenGLWindowContext> = Box::new(WinitOpenGLContext {
-                        context: Some(CurrentOrNot::Current(opengl_context)),
-                    });
-                    (window, Some(ctx))
+                    gl_context = Some(opengl_context);
+
+                    window
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            GfxApiType::WebGL2 {
+                canvas_id,
+                webgl_config,
+            } => {
+                {
+                    use wasm_bindgen::JsCast;
+                    use winit::platform::web::{WindowBuilderExtWebSys, WindowExtWebSys};
+                    let document = web_sys::window()
+                        .expect("failed ot get websys window")
+                        .document()
+                        .expect("failed to get websys doc");
+
+                    {
+                        let canvas = if let Some(canvas_id) = canvas_id {
+                            document
+                                .get_element_by_id(&canvas_id)
+                                .expect("settings doesn't contain canvas and DOM doesn't have a canvas element either")
+                                .dyn_into::<web_sys::HtmlCanvasElement>().expect("failed to get canvas converted into html canvas element")
+                        } else {
+                            document.get_elements_by_tag_name("canvas").item(0)
+                                .expect("canvas_id doesn't contain an id and DOM doesn't have a canvas element either")
+                                .dyn_into::<web_sys::HtmlCanvasElement>()
+                                .expect("egui winit canvas element conversion failed")
+                        };
+                        window_builder = window_builder.with_canvas(Some(canvas));
+                    }
+                    // create winit window
+                    let window = window_builder
+                        .with_prevent_default(true)
+                        .build(&el)
+                        .expect("failed to create winit window");
+
+                    window
                 }
             }
 
-            _ => (
-                window_builder
-                    .build(&el)
-                    .expect("failed ot create winit window"),
-                None,
-            ),
+            _ => window_builder
+                .build(&el)
+                .expect("failed ot create winit window"),
         };
 
-        let window_info_for_gfx = WindowInfoForGfx {
-            gfx_api_config,
-            window_handle: window.raw_window_handle(),
-            opengl_context,
-        };
         let framebuffer_size_physical = window.inner_size();
 
         let framebuffer_size = [
@@ -156,24 +241,24 @@ impl WindowBackend for WinitBackend {
                 [0.0, 0.0].into(),
                 [window_size.width, window_size.height].into(),
             )),
-            pixels_per_point: None,
+            pixels_per_point: Some(scale),
             ..Default::default()
         };
-        (
-            Self {
-                event_loop: Some(el),
-                window,
-                modifiers: Modifiers::new(),
-                framebuffer_size,
-                scale,
-                cursor_pos_logical: [0.0, 0.0],
-                raw_input,
-                frame_events: Vec::new(),
-                latest_resize_event: true,
-                should_close: false,
-            },
-            window_info_for_gfx,
-        )
+        Self {
+            event_loop: Some(el),
+            window,
+            modifiers: Modifiers::new(),
+            framebuffer_size,
+            scale,
+            cursor_pos_logical: [0.0, 0.0],
+            raw_input,
+            frame_events: Vec::new(),
+            latest_resize_event: true,
+            should_close: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            gl_context,
+            backend_settings,
+        }
     }
 
     fn take_raw_input(&mut self) -> egui::RawInput {
@@ -188,7 +273,7 @@ impl WindowBackend for WinitBackend {
         }
     }
 
-    fn run_event_loop<G: GfxBackend + 'static, U: UserApp<Self, G> + 'static>(
+    fn run_event_loop<G: GfxBackend<Self> + 'static, U: UserApp<Self, G> + 'static>(
         mut self,
         mut gfx_backend: G,
         mut user_app: U,
@@ -225,14 +310,12 @@ impl WindowBackend for WinitBackend {
                                 self.framebuffer_size[0] as f32 / self.scale,
                                 self.framebuffer_size[1] as f32 / self.scale,
                             ],
-                            framebuffer_size_physical: self.framebuffer_size,
-                            scale: self.scale,
                         };
                         // render egui with gfx backend
                         gfx_backend.prepare_render(gfx_output);
                         gfx_backend.render();
                         // present the frame and loop back
-                        gfx_backend.present();
+                        gfx_backend.present(&mut self);
                     }
                     rest => self.handle_event(rest),
                 }
@@ -245,6 +328,29 @@ impl WindowBackend for WinitBackend {
     fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
         let size = self.window.inner_size();
         [size.width, size.height]
+    }
+
+    fn get_settings(&self) -> &BackendSettings {
+        &self.backend_settings
+    }
+}
+unsafe impl HasRawWindowHandle for WinitBackend {
+    fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
+        self.window.raw_window_handle()
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+impl OpenGLWindowContext for WinitBackend {
+    fn swap_buffers(&mut self) {
+        self.gl_context
+            .as_ref()
+            .expect("opengl context is none")
+            .swap_buffers()
+            .expect("failed to swap buffers");
+    }
+
+    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
+        self.gl_context.as_ref().unwrap().get_proc_address(symbol)
     }
 }
 impl WinitBackend {
@@ -356,10 +462,10 @@ fn winit_modifiers_to_egui(modifiers: ModifiersState) -> Modifiers {
 }
 fn winit_mouse_button_to_egui(mb: winit::event::MouseButton) -> egui::PointerButton {
     match mb {
-        event::MouseButton::Left => egui::PointerButton::Primary,
-        event::MouseButton::Right => egui::PointerButton::Secondary,
-        event::MouseButton::Middle => egui::PointerButton::Middle,
-        event::MouseButton::Other(_) => egui::PointerButton::Extra1,
+        MouseButton::Left => egui::PointerButton::Primary,
+        MouseButton::Right => egui::PointerButton::Secondary,
+        MouseButton::Middle => egui::PointerButton::Middle,
+        MouseButton::Other(_) => egui::PointerButton::Extra1,
     }
 }
 fn winit_key_to_egui(key_code: VirtualKeyCode) -> Option<Key> {

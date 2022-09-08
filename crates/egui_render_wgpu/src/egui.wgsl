@@ -6,7 +6,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> u_screen_size: vec2<f32>;
+@group(0) @binding(0) var<uniform> u_screen_size: vec4<f32>;
 
 fn linear_from_srgb(srgb: vec3<f32>) -> vec3<f32> {
     let cutoff = srgb < vec3<f32>(10.31475);

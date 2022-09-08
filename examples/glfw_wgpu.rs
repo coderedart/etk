@@ -1,23 +1,23 @@
 use std::borrow::Cow;
 
 use egui::Window;
-use egui_backend::{GfxApiConfig, GfxBackend, UserApp, WindowBackend};
+use egui_backend::{BackendSettings, GfxApiType, GfxBackend, UserApp, WindowBackend};
 use egui_render_wgpu::wgpu;
 use egui_render_wgpu::{
     wgpu::{Device, RenderPipeline, TextureFormat},
     WgpuBackend,
 };
-use egui_window_glfw::{GlfwConfig, GlfwWindow};
+use egui_window_glfw::{GlfwBackend, GlfwConfig};
 struct App {
     pipeline: RenderPipeline,
     frame_count: usize,
 }
 
-impl UserApp<GlfwWindow, WgpuBackend> for App {
+impl UserApp<GlfwBackend, WgpuBackend> for App {
     fn run(
         &mut self,
         egui_context: &egui::Context,
-        _window_backend: &mut GlfwWindow,
+        _window_backend: &mut GlfwBackend,
         gfx_backend: &mut WgpuBackend,
     ) {
         self.draw_triangle(gfx_backend);
@@ -109,8 +109,13 @@ fn main() {
             ));
         })),
     };
-    let (glfw_backend, window_info_for_gfx) = GlfwWindow::new(glfw_config, GfxApiConfig::Vulkan {});
-    let wgpu_backend = WgpuBackend::new(window_info_for_gfx, Default::default());
+    let mut glfw_backend = GlfwBackend::new(
+        glfw_config,
+        BackendSettings {
+            gfx_api_type: GfxApiType::Vulkan,
+        },
+    );
+    let wgpu_backend = WgpuBackend::new(&mut glfw_backend, Default::default());
     let app = App::new(&wgpu_backend.device, wgpu_backend.surface_config.format);
     glfw_backend.run_event_loop(wgpu_backend, app);
 }

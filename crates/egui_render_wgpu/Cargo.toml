@@ -11,5 +11,8 @@ description = "wgpu render integration for egui"
 egui_backend = { version = "0.1", path = "../egui_backend", features = ["egui_bytemuck"] }
 intmap = { version = "2" }
 bytemuck = { version = "1" }
-wgpu = { version = "0.13" }
+wgpu = { version = "0.13", features = ["webgl"]}
 pollster = { version = "0.2" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom ={ version = "*", features = ["js"]} # because egui -> ahash issue https://github.com/emilk/egui/issues/2009
