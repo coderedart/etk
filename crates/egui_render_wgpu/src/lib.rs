@@ -124,8 +124,9 @@ impl<W: WindowBackend> GfxBackend<W> for WgpuBackend {
         }
     }
 
-    fn prepare_frame(&mut self, framebuffer_size_update: Option<[u32; 2]>, window_backend: &mut W) {
-        if let Some(size) = framebuffer_size_update {
+    fn prepare_frame(&mut self, framebuffer_size_update: bool, window_backend: &mut W) {
+        if framebuffer_size_update {
+            let size = window_backend.get_live_physical_size_framebuffer();
             self.surface_config.width = size[0];
             self.surface_config.height = size[1];
             self.surface.configure(&self.device, &self.surface_config);

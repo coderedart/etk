@@ -31,7 +31,7 @@ impl<
         }
     }
 
-    fn prepare_frame(&mut self, framebuffer_size_update: Option<[u32; 2]>, window_backend: &mut W) {
+    fn prepare_frame(&mut self, framebuffer_size_update: bool, window_backend: &mut W) {
         self.glow_backend
             .prepare_frame(framebuffer_size_update, window_backend);
     }

@@ -183,17 +183,6 @@ impl WindowBackend for SDL2Backend {
         self.raw_input.take()
     }
 
-    fn take_latest_size_update(&mut self) -> Option<[u32; 2]> {
-        if self.latest_resize_event {
-            self.latest_resize_event = false;
-            let size = self.window.drawable_size();
-            self.size_physical_pixels = [size.0, size.1];
-            Some(self.size_physical_pixels)
-        } else {
-            None
-        }
-    }
-
     fn run_event_loop<G: GfxBackend<Self>, U: UserApp<Self, G>>(
         mut self,
         mut gfx_backend: G,
@@ -205,10 +194,9 @@ impl WindowBackend for SDL2Backend {
             self.tick();
             // take egui input
             let input = self.take_raw_input();
-            // take any frambuffer resize events
-            let fb_size_update = self.take_latest_size_update();
             // prepare surface for drawing
-            gfx_backend.prepare_frame(fb_size_update, &mut self);
+            gfx_backend.prepare_frame(self.latest_resize_event, &mut self);
+            self.latest_resize_event = false;
             // begin egui with input
             egui_context.begin_frame(input);
             // run userapp gui function. let user do anything he wants with window or gfx backends

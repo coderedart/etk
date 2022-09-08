@@ -1,13 +1,15 @@
 /// most window backends create the opengl context along with the window (glfw / sdl2) and we need some
-/// functions like SwapBuffers or MakeCurrent etc.. for rendering needs.
-/// but not all window backends provide a proper "OpenGL Window Context" separate from the window object itself.
-/// so, instead of receiving some kind of `dyn OpenGLWindowContext`, we will just pass the window backend
-/// to the renderer for most functions and hope that the renderer can call the relevant functions.
+/// functions like SwapBuffers or MakeCurrent etc.. which will be called by the renderer.
+/// most window backends keep the "OpenGL Window Context" together with the window object itself.
+///
+/// so, instead of receiving some kind of `dyn OpenGLWindowContext`, we will just let the window backends implement this trait.
+///
+/// `GfxBackend` trait will pass the window backend as argument to the renderer for most functions and the gfx backend can call the relevant methods.
 ///
 /// This ofcourse restricts multi-threaded rendering as you can't transfer a `&mut WindowBackend` to another thread safely.
 /// but opengl + multi-threading is a weird thing anyway.
 ///
-/// only available on native, as wasm renderers create the context themselves and browsers deal with the `swap_buffers` transparently.
+/// only available on native, as webgl backends create the context themselves without `get_proc_address` and browsers deal with the `swap_buffers` transparently.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait OpenGLWindowContext {
     /// Swaps buffers (swapchain) when we are using double buffering (99% of the time, double buffering is the default)
@@ -18,12 +20,17 @@ pub trait OpenGLWindowContext {
 }
 
 /// Native settings for OpenGL creation.
+///
 /// if the backend cannot create context with these settings, it **should** panic.
 /// after the creation of the window, the window backend **must** fill the options which are
 /// not set by the user but still provided by the backend by default.
+///
 /// example:
-///     if user did not set the depth bits. after creating window, the backend must
-///     get the depth bits and set the relevant option. this info will be utilized by the rendering backend.
+///
+/// > if user did not set the depth bits. after creating window, the backend must
+/// > get the depth bits (if any) of the created window  and add that info to the backend settings.
+/// > this is needed because the window backend might create depth buffer even without asking.
+/// > and this info will be utilized by the gfx backend.
 #[derive(Debug, Clone, Copy)]
 pub struct NativeGlConfig {
     /// major opengl version.
@@ -62,9 +69,11 @@ impl Default for NativeGlConfig {
     }
 }
 /// these are settings to be provided to browser when requesting a webgl context
-/// refer to `WebGL context attributes:` settings in the link:
-/// https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/getContext
-/// alternatively, the spec lists all attributes here https://registry.khronos.org/webgl/specs/latest/1.0/#5.2
+///
+/// refer to `WebGL context attributes:` settings in the link: <https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/getContext>
+///
+/// alternatively, the spec lists all attributes here <https://registry.khronos.org/webgl/specs/latest/1.0/#5.2>
+///
 /// ```js
 /// WebGLContextAttributes {
 ///     boolean alpha = true;
@@ -79,9 +88,8 @@ impl Default for NativeGlConfig {
 /// };
 ///
 /// ```
-/// we will only support WebGL2 for now. WebGL2 is available in 90+ % of all users
-/// according to https://caniuse.com/?search=webgl2
-/// we can add support for webgl2 if needed later
+///
+/// we will only support WebGL2 for now. WebGL2 is available in 90+ % of all active devices according to <https://caniuse.com/?search=webgl2>.
 #[derive(Debug, Clone)]
 pub struct WebGlConfig {
     pub alpha: Option<bool>,

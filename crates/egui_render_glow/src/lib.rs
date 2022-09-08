@@ -158,12 +158,9 @@ impl<
         }
     }
 
-    fn prepare_frame(
-        &mut self,
-        framebuffer_size_update: Option<[u32; 2]>,
-        _window_backend: &mut W,
-    ) {
-        if let Some(fb_size) = framebuffer_size_update {
+    fn prepare_frame(&mut self, framebuffer_size_update: bool, window_backend: &mut W) {
+        if framebuffer_size_update {
+            let fb_size = window_backend.get_live_physical_size_framebuffer();
             unsafe {
                 self.glow_context
                     .viewport(0, 0, fb_size[0] as i32, fb_size[1] as i32);

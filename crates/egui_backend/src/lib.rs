@@ -18,8 +18,10 @@
 //! is often created with a window rather than a separate api etc..
 //!
 //! If we remove support for OpenGL, we can simplify this crate A LOT.
+//!
 //! TODO: remove OpenGL into a separate crate / trait once webgpu spec is stable
-//! https://developer.chrome.com/en/docs/web-platform/webgpu/ origin trials of webgpu in chrome ends on 1st Feb, 2023.
+//!
+//! <https://developer.chrome.com/en/docs/web-platform/webgpu/> origin trials of webgpu in chrome ends on 1st Feb, 2023.
 //!
 
 pub use egui;
@@ -117,9 +119,6 @@ pub trait WindowBackend: Sized + HasRawWindowHandle {
     fn new(config: Self::Configuration, backend_settings: BackendSettings) -> Self;
     /// This frame's events gather into rawinput and to be presented to egui's context
     fn take_raw_input(&mut self) -> RawInput;
-    /// return Some(size) if there's been a framebuffer resize event recently. once we take it, it should
-    /// return None until there's a fresh resize event.
-    fn take_latest_size_update(&mut self) -> Option<[u32; 2]>;
 
     /// sometimes, the frame buffer size might have changed and the event is still not received.
     /// in those cases, wgpu / vulkan like render apis will throw an error if you try to acquire swapchain
@@ -139,18 +138,36 @@ pub trait WindowBackend: Sized + HasRawWindowHandle {
 
 /// This is the trait to implement for Gfx backends. these could be Gfx APIs like opengl or vulkan or wgpu etc..
 /// or higher level renderers like three-d or rend3 or custom renderers etc..
+///
+/// This trait is generic over the WindowBackend because some renderers might want to only work for a specific
+/// window backend.
+///
+/// for example, an sdl2 renderer might only want to work with a specific sdl2 window backend. and
+/// another person might want to make a different sdl2 renderer, and can reuse the old sdl2 window backend.
+///
+///
 pub trait GfxBackend<W: WindowBackend> {
     /// similar to WindowBakendSettings. just make them as complicated or as simple as you want.
     type Configuration: Default;
 
     /// create a new GfxBackend using info from window backend and custom settings struct
+    /// `WindowBackend` trait provides the backend settings, which can be used by the renderer to check
+    /// for compatibility.
+    ///
+    /// for example, a glow renderer might want an opengl context. but if the window was created without one,
+    /// the glow renderer should panic.
     fn new(window_backend: &mut W, settings: Self::Configuration) -> Self;
-    /// prepare the surface / swapchain etc.. for rendering. this should be called right after
-    /// WindowBackend has finished processing events so that the Gfx backend could resize
-    /// if there's any resize event.
-    fn prepare_frame(&mut self, framebuffer_size_update: Option<[u32; 2]>, window_backend: &mut W);
 
-    /// reference : https://github.com/gfx-rs/wgpu/wiki/Encapsulating-Graphics-Work
+    /// prepare the surface / swapchain etc.. for rendering. this should be called right after
+    /// WindowBackend has finished processing events so that the Gfx backend could resize the framebuffer
+    /// if there's any resize event.
+    ///
+    /// if the framebuffer needs to resize due to a resize event or scale change event, the bool would be true.
+    ///
+    /// the gfx backend can get the latest size (in physical pixels) using `WindowBackend::get_live_physical_size_framebuffer` fn.
+    fn prepare_frame(&mut self, framebuffer_needs_resize: bool, window_backend: &mut W);
+
+    /// reference : <https://github.com/gfx-rs/wgpu/wiki/Encapsulating-Graphics-Work>
     /// specific quote about submitting commands
     /// > use a fewest possible render passes as possible...
     /// > Middleware should not call queue.submit unless absolutely necessary. It is an extremely expensive function and should only be called once per frame.
@@ -163,16 +180,53 @@ pub trait GfxBackend<W: WindowBackend> {
     /// the renderers could have just collected them in random order, but decide to batch them up by bindgroups like textures (sprites) or by shaders (shapes / lighting) etc..
     /// this function can be used to do that kind of stuff.
     /// we submit the egui data at this point so the renderer can upload to buffers or prepare bindgroups / uniforms etc...
+    ///
+    /// Basically, this is the stage where renderers can sort meshes, upload data / textures, prepare bindgroups, create mipmaps and other such tasks to prepare for the rendering stage.
     fn prepare_render(&mut self, egui_gfx_output: EguiGfxOutput);
 
+    /// This is where the renderers will start creating renderpasses, issue draw calls etc.. using the data previously prepared.
+    ///
     fn render(&mut self);
 
     /// This is called at the end of the frame. after everything is drawn, you can now present
-    /// the frame (swap buffers).
+    /// on opengl, you might call `WindowBackend::swap_buffers`.
+    /// on wgpu / vulkan, you might submit commands to queues, present swapchain image etc..
     fn present(&mut self, window_backend: &mut W);
 }
 
-/// implement this trait for your struct and just use any Window or Gfx backends you want.
+/// This is the trait most users care about. just implement this trait and you can use any `WindowBackend` or `GfxBackend` to run your egui app.
+///
+/// First, if you don't particular care about the window or gfx backends used to run your app, you can just use a generic impl
+/// ```rust
+/// pub struct App;
+/// impl<W: WindowBackend, G: GfxBackend<W>> UserApp<W, G> for App {
+///     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut W, gfx_backend: &mut G) {
+///         egui::Window::new("New Window").show(egui_context, |ui| {
+///             ui.label("hello label");
+///         });
+///     }    
+/// }
+/// ```
+///
+/// Second, if you want to use functionality from a particular Backend like drawing with wgpu, use specific generic types on your impl.
+/// ```rust
+/// pub struct App;
+/// impl UserApp<WinitBackend, WgpuBackend> for App {
+///     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut WinitBackend, gfx_backend: &mut WgpuBackend) {
+///         egui::Window::new("New Window").show(egui_context, |ui| {
+///             ui.label("hello label");
+///         });
+///         /* do something with window_backend or gfx_backend */
+///         // most of the data is public in both of those backends so that user can see and understand exactly what's going on.
+///     }    
+/// }
+/// ```
+///
+/// we might add more functions to this trait in future which will be called between specific functions.
+/// like `pre_render` which will be called after `GfxBackend::pre_render` but before `GfxBackend::render`.
+/// or `post_render` which will be called after `GfxBackend::render` but before `GfxBackend::present` etc..
+///
+/// it will all depend on the demands of users and backend implementors who might need more flexibility
 pub trait UserApp<W: WindowBackend, G: GfxBackend<W>>: Sized {
     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut W, gfx_backend: &mut G);
 }

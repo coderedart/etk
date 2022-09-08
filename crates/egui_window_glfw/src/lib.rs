@@ -177,17 +177,6 @@ impl WindowBackend for GlfwBackend {
         self.raw_input.take()
     }
 
-    fn take_latest_size_update(&mut self) -> Option<[u32; 2]> {
-        if self.resized_event_pending {
-            self.resized_event_pending = false;
-            let (w, h) = self.window.get_framebuffer_size();
-            self.size_physical_pixels = [w as u32, h as u32];
-            Some(self.size_physical_pixels)
-        } else {
-            None
-        }
-    }
-
     fn run_event_loop<G: GfxBackend<Self>, U: UserApp<Self, G>>(
         mut self,
         mut gfx_backend: G,
@@ -200,9 +189,10 @@ impl WindowBackend for GlfwBackend {
             // take egui input
             let input = self.take_raw_input();
             // take any frambuffer resize events
-            let fb_size_update = self.take_latest_size_update();
+
             // prepare surface for drawing
-            gfx_backend.prepare_frame(fb_size_update, &mut self);
+            gfx_backend.prepare_frame(self.resized_event_pending, &mut self);
+            self.resized_event_pending = false;
             // begin egui with input
             egui_context.begin_frame(input);
             // run userapp gui function. let user do anything he wants with window or gfx backends
