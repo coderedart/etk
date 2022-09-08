@@ -1,6 +1,6 @@
 [package]
 name = "egui_window_glfw"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "glfw window integration for egui"
@@ -15,4 +15,4 @@ glfw_wayland = ["glfw/wayland"]
 
 [dependencies]
 glfw = { version = "0.45", default-features = false }
-egui_backend = { version = "0.1", path = "../egui_backend" }
+egui_backend = { version = "0.2", path = "../egui_backend" }

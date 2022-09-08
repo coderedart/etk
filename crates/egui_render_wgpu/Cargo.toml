@@ -1,6 +1,6 @@
 [package]
 name = "egui_render_wgpu"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "wgpu render integration for egui"
@@ -8,7 +8,7 @@ description = "wgpu render integration for egui"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-egui_backend = { version = "0.1", path = "../egui_backend", features = ["egui_bytemuck"] }
+egui_backend = { version = "0.2", path = "../egui_backend", features = ["egui_bytemuck"] }
 intmap = { version = "2" }
 bytemuck = { version = "1" }
 wgpu = { version = "0.13", features = ["webgl"]}

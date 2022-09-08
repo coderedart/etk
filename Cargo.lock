@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "egui_backend"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui",
  "raw-window-handle 0.4.3",
@@ -668,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "egui_render_glow"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "egui_backend",
@@ -687,7 +687,7 @@ version = "0.1.0"
 
 [[package]]
 name = "egui_render_three_d"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui_backend",
  "egui_render_glow",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "egui_render_wgpu"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "egui_backend",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "egui_window_glfw"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui_backend",
  "glfw",
@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "egui_window_sdl2"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui_backend",
  "sdl2",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "egui_window_tao"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui_backend",
  "tao",
@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "egui_window_winit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui_backend",
  "getrandom",
@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "etk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "console_error_panic_hook",
  "egui",
@@ -1996,9 +1996,9 @@ checksum = "b1de2e551fb905ac83f73f7aedf2f0cb4a0da7e35efa24a202a936269f1f18e1"
 
 [[package]]
 name = "percent-encoding"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4fd5641d01c8f18a23da7b6fe29298ff4b55afcccdf78973b24cf3175fee32e"
+checksum = "478c572c3d73181ff3c2539045f6eb99e5491218eae919370993b890cdbdd98e"
 
 [[package]]
 name = "pest"

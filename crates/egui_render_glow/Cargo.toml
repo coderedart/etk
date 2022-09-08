@@ -1,6 +1,6 @@
 [package]
 name = "egui_render_glow"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "glow render integration for egui"
@@ -8,7 +8,7 @@ description = "glow render integration for egui"
 
 [dependencies]
 glow = { version = "0.11" }
-egui_backend = { version = "0.1", path = "../egui_backend" , features = ["egui_bytemuck"]}
+egui_backend = { version = "0.2.0", path = "../egui_backend" , features = ["egui_bytemuck"]}
 intmap = { version = "2" }
 bytemuck = { version = "1" }
 tracing = {version = "0"}

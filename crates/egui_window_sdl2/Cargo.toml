@@ -1,6 +1,6 @@
 [package]
 name = "egui_window_sdl2"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "sdl2 window integration for egui"
@@ -9,4 +9,4 @@ description = "sdl2 window integration for egui"
 
 [dependencies]
 sdl2 = { version = "0.35", features = ["raw-window-handle"] }
-egui_backend = { version = "0.1", path = "../egui_backend" }
+egui_backend = { version = "0.2", path = "../egui_backend" }
