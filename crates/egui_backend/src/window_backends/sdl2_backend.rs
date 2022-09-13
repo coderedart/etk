@@ -9,7 +9,7 @@ use sdl2::{
     Sdl,
 };
 
-pub struct SDL2Backend {
+pub struct Sdl2Backend {
     pub sdl_context: Sdl,
     pub event_pump: sdl2::EventPump,
     pub window: Window,
@@ -31,7 +31,7 @@ impl Default for SDL2Settings {
         Self {}
     }
 }
-impl WindowBackend for SDL2Backend {
+impl WindowBackend for Sdl2Backend {
     type Configuration = SDL2Settings;
 
     fn new(_config: Self::Configuration, backend_settings: BackendSettings) -> Self
@@ -229,7 +229,7 @@ impl WindowBackend for SDL2Backend {
         &self.backend_settings
     }
 }
-impl OpenGLWindowContext for SDL2Backend {
+impl OpenGLWindowContext for Sdl2Backend {
     fn swap_buffers(&mut self) {
         self.window.gl_swap_window();
     }
@@ -238,12 +238,12 @@ impl OpenGLWindowContext for SDL2Backend {
         self.window.subsystem().gl_get_proc_address(symbol) as *const core::ffi::c_void
     }
 }
-unsafe impl HasRawWindowHandle for SDL2Backend {
+unsafe impl HasRawWindowHandle for Sdl2Backend {
     fn raw_window_handle(&self) -> RawWindowHandle {
         self.window.raw_window_handle()
     }
 }
-impl SDL2Backend {
+impl Sdl2Backend {
     pub fn tick(&mut self) {
         self.frame_events.clear();
         let mut modifiers = Modifiers::default();

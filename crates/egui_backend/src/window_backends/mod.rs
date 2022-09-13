@@ -1,6 +1,6 @@
 #[cfg(feature = "glfw")]
-mod glfw_backend;
+pub mod glfw_backend;
 #[cfg(feature = "sdl2")]
-mod sdl2_backend;
+pub mod sdl2_backend;
 #[cfg(feature = "winit")]
-mod winit_backend;
+pub mod winit_backend;

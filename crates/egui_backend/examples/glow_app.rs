@@ -1,6 +1,6 @@
 use egui::Window;
+use egui_backend::gfx_backends::glow_backend::{glow::HasContext, *};
 use egui_backend::{BackendSettings, GfxBackend, OpenGLWindowContext, UserApp, WindowBackend};
-use egui_render_glow::{glow::HasContext, *};
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 struct App {
     frame_count: usize,
@@ -54,7 +54,12 @@ pub fn fake_main<W: WindowBackend + OpenGLWindowContext>() {
     let app = App::new(&glow_backend);
     window_backend.run_event_loop(glow_backend, app);
 }
-#[allow(dead_code)]
+#[cfg(feature = "winit")]
+type WB = egui_backend::window_backends::winit_backend::WinitBackend;
+#[cfg(feature = "glfw")]
+type WB = egui_backend::window_backends::glfw_backend::GlfwBackend;
+#[cfg(feature = "sdl2")]
+type WB = egui_backend::window_backends::sdl2_backend::Sdl2Backend;
 fn main() {
-    panic!("don't run glow_app as an example. run sdl2_glow or glfw_glow or winit_glow instead");
+    fake_main::<WB>();
 }

@@ -1,12 +1,12 @@
 use std::borrow::Cow;
 
 use egui::Window;
-use egui_backend::{BackendSettings, GfxApiType, GfxBackend, UserApp, WindowBackend};
-use egui_render_wgpu::wgpu;
-use egui_render_wgpu::{
+use egui_backend::gfx_backends::wgpu_backend::{
+    wgpu,
     wgpu::{Device, RenderPipeline, TextureFormat},
     WgpuBackend,
 };
+use egui_backend::{BackendSettings, GfxApiType, GfxBackend, UserApp, WindowBackend};
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 struct App {
@@ -118,7 +118,12 @@ pub fn fake_main<W: WindowBackend>() {
     let app = App::new(&wgpu_backend.device, wgpu_backend.surface_config.format);
     window_backend.run_event_loop(wgpu_backend, app);
 }
-#[allow(dead_code)]
+#[cfg(feature = "winit")]
+type WB = egui_backend::window_backends::winit_backend::WinitBackend;
+#[cfg(feature = "glfw")]
+type WB = egui_backend::window_backends::glfw_backend::GlfwBackend;
+#[cfg(feature = "sdl2")]
+type WB = egui_backend::window_backends::sdl2_backend::Sdl2Backend;
 fn main() {
-    panic!("wgpu_app example is not an example. it is to put common wgpu stuff in one file");
+    fake_main::<WB>();
 }

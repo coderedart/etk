@@ -6,7 +6,7 @@ description = "Traits to streamline egui window and render integrations"
 license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["egui_default_fonts", "wgpu"]
+default = ["egui_default_fonts"]
 glfw = ["dep:glfw"]
 sdl2 = ["dep:sdl2"]
 winit = [
@@ -99,3 +99,7 @@ getrandom = { version = "0.2", features = [
     "js",
 ], optional = true } # https://github.com/emilk/egui/issues/2009
 js-sys = { version = "*", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tracing-subscriber = { version = "*", features = ["env-filter"] }
+tracing = { version = "*" }

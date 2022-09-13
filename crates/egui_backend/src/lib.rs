@@ -27,9 +27,9 @@
 pub use egui;
 pub use raw_window_handle;
 
-mod gfx_backends;
+pub mod gfx_backends;
 mod opengl;
-mod window_backends;
+pub mod window_backends;
 use egui::{ClippedPrimitive, RawInput, TexturesDelta};
 pub use opengl::*;
 use raw_window_handle::HasRawWindowHandle;
