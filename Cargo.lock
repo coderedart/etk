@@ -662,6 +662,31 @@ dependencies = [
 name = "egui_backend"
 version = "0.2.0"
 dependencies = [
+ "bytemuck",
+ "egui",
+ "getrandom",
+ "glfw",
+ "glow",
+ "glutin",
+ "intmap",
+ "js-sys",
+ "pollster",
+ "raw-window-handle 0.4.3",
+ "sdl2",
+ "three-d",
+ "tracing",
+ "wasm-bindgen",
+ "web-sys",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "egui_backend"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "472cd1787d2aa767334bc160ea4dc2ed47964bf412c2b07299857e8595159268"
+dependencies = [
  "egui",
  "raw-window-handle 0.4.3",
 ]
@@ -669,9 +694,26 @@ dependencies = [
 [[package]]
 name = "egui_render_glow"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ffd8eae1e81b17132ac7872ac8d120ff4869185979d0e399cbd55814e96fad7"
 dependencies = [
  "bytemuck",
- "egui_backend",
+ "egui_backend 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "getrandom",
+ "glow",
+ "intmap",
+ "js-sys",
+ "tracing",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "egui_render_glow"
+version = "0.3.0"
+dependencies = [
+ "bytemuck",
+ "egui_backend 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "getrandom",
  "glow",
  "intmap",
@@ -687,19 +729,19 @@ version = "0.1.0"
 
 [[package]]
 name = "egui_render_three_d"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
- "egui_backend",
- "egui_render_glow",
+ "egui_backend 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "egui_render_glow 0.2.0",
  "three-d",
 ]
 
 [[package]]
 name = "egui_render_wgpu"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
- "egui_backend",
+ "egui_backend 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "getrandom",
  "intmap",
  "pollster",
@@ -710,15 +752,15 @@ dependencies = [
 name = "egui_window_glfw"
 version = "0.2.0"
 dependencies = [
- "egui_backend",
+ "egui_backend 0.2.0",
  "glfw",
 ]
 
 [[package]]
 name = "egui_window_sdl2"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
- "egui_backend",
+ "egui_backend 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2",
 ]
 
@@ -726,15 +768,15 @@ dependencies = [
 name = "egui_window_tao"
 version = "0.2.0"
 dependencies = [
- "egui_backend",
+ "egui_backend 0.2.0",
  "tao",
 ]
 
 [[package]]
 name = "egui_window_winit"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
- "egui_backend",
+ "egui_backend 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "getrandom",
  "glutin",
  "serde_json",
@@ -786,8 +828,8 @@ version = "0.2.0"
 dependencies = [
  "console_error_panic_hook",
  "egui",
- "egui_backend",
- "egui_render_glow",
+ "egui_backend 0.2.0",
+ "egui_render_glow 0.3.0",
  "egui_render_three_d",
  "egui_render_wgpu",
  "egui_window_glfw",

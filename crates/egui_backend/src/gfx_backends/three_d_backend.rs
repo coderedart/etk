@@ -1,5 +1,5 @@
-use egui_backend::{GfxBackend, WindowBackend};
-use egui_render_glow::GlowBackend;
+use super::glow_backend::GlowBackend;
+use crate::{EguiGfxOutput, GfxBackend, WindowBackend};
 pub use three_d;
 use three_d::{Context, HasContext};
 pub struct ThreeDBackend {
@@ -16,14 +16,14 @@ impl Drop for ThreeDBackend {
 }
 
 impl<
-        #[cfg(not(target_arch = "wasm32"))] W: WindowBackend + egui_backend::OpenGLWindowContext,
+        #[cfg(not(target_arch = "wasm32"))] W: WindowBackend + crate::OpenGLWindowContext,
         #[cfg(target_arch = "wasm32")] W: WindowBackend,
     > GfxBackend<W> for ThreeDBackend
 {
     type Configuration = ();
 
     fn new(window_backend: &mut W, settings: Self::Configuration) -> Self {
-        let glow_backend = egui_render_glow::GlowBackend::new(window_backend, settings);
+        let glow_backend = GlowBackend::new(window_backend, settings);
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -48,7 +48,7 @@ impl<
             .prepare_frame(framebuffer_size_update, window_backend);
     }
 
-    fn prepare_render(&mut self, egui_gfx_output: egui_backend::EguiGfxOutput) {
+    fn prepare_render(&mut self, egui_gfx_output: EguiGfxOutput) {
         <GlowBackend as GfxBackend<W>>::prepare_render(&mut self.glow_backend, egui_gfx_output);
     }
 
