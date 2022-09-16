@@ -110,7 +110,7 @@ pub struct EguiGfxOutput {
 /// 2. convert events to egui raw input and give it to egui context's begin_frame
 /// 3. provide framebuffer resize (optional) details to Gfx Backend when preparing the frame (surface / swapchain etc..)
 /// 4. run event loop and call the necessary functions of Gfx and UserApp
-pub trait WindowBackend: Sized + HasRawWindowHandle {
+pub trait WindowBackend: HasRawWindowHandle {
     /// This will be WindowBackend's configuration. if necessary, just add Boxed closures as its
     /// fields and run them before window creation, after window creation etc.. to provide maximum
     /// configurability to users
@@ -148,7 +148,7 @@ pub trait WindowBackend: Sized + HasRawWindowHandle {
 /// another person might want to make a different sdl2 renderer, and can reuse the old sdl2 window backend.
 ///
 ///
-pub trait GfxBackend<W: WindowBackend> {
+pub trait GfxBackend<W: WindowBackend + ?Sized> {
     /// similar to WindowBakendSettings. just make them as complicated or as simple as you want.
     type Configuration: Default;
 
@@ -229,6 +229,6 @@ pub trait GfxBackend<W: WindowBackend> {
 /// or `post_render` which will be called after `GfxBackend::render` but before `GfxBackend::present` etc..
 ///
 /// it will all depend on the demands of users and backend implementors who might need more flexibility
-pub trait UserApp<W: WindowBackend, G: GfxBackend<W>>: Sized {
+pub trait UserApp<W: WindowBackend + ?Sized, G: GfxBackend<W> + ?Sized> {
     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut W, gfx_backend: &mut G);
 }

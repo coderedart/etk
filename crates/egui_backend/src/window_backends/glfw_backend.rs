@@ -8,7 +8,9 @@ use glfw::OpenGlProfileHint;
 use glfw::SwapInterval;
 use glfw::WindowEvent;
 use glfw::WindowHint;
+use std::convert::TryInto;
 use std::sync::mpsc::Receiver;
+use tracing::info;
 
 pub use glfw;
 
@@ -51,7 +53,7 @@ pub struct GlfwConfig {
 impl WindowBackend for GlfwBackend {
     type Configuration = GlfwConfig;
 
-    fn new(config: Self::Configuration, backend_settings: BackendSettings) -> Self {
+    fn new(config: Self::Configuration, mut backend_settings: BackendSettings) -> Self {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
         if let Some(glfw_callback) = config.glfw_callback {
@@ -140,7 +142,47 @@ impl WindowBackend for GlfwBackend {
                     SwapInterval::None
                 });
             }
+            match &mut backend_settings.gfx_api_type {
+                GfxApiType::NoApi => todo!(),
+                GfxApiType::Vulkan => todo!(),
+                GfxApiType::OpenGL { native_config } => {
+                    let NativeGlConfig {
+                        major,
+                        minor,
+                        es,
+                        core,
+                        debug,
+                        ..
+                    } = native_config;
+                    *debug = Some(window.is_opengl_debug_context());
+                    match window.get_client_api() {
+                        glfw::ffi::OPENGL_API => {
+                            *es = Some(false);
+                        }
+                        glfw::ffi::OPENGL_ES_API => {
+                            *es = Some(true);
+                        }
+                        rest => panic!("invalid api hint: {}", rest),
+                    }
+                    let gl_version = window.get_context_version();
+                    *major = Some(gl_version.major.try_into().unwrap());
+                    *minor = Some(gl_version.minor.try_into().unwrap());
+                    match window.get_opengl_profile() {
+                        glfw::ffi::OPENGL_CORE_PROFILE => {
+                            *core = Some(true);
+                        }
+                        glfw::ffi::OPENGL_COMPAT_PROFILE => {
+                            *core = Some(false);
+                        }
+                        rest => panic!("invalid opengl profile: {rest} "),
+                    }
+                }
+            }
         }
+        info!(
+            "glfw gfx api type settings: {:#?}",
+            &backend_settings.gfx_api_type
+        );
         // collect details and keep them updated
         let (width, height) = window.get_framebuffer_size();
         let scale = window.get_content_scale();
@@ -173,6 +215,12 @@ impl WindowBackend for GlfwBackend {
 
     fn take_raw_input(&mut self) -> RawInput {
         self.raw_input.take()
+    }
+
+    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
+        let physical_fb_size = self.window.get_framebuffer_size();
+        self.size_physical_pixels = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
+        self.size_physical_pixels
     }
 
     fn run_event_loop<G: GfxBackend<Self>, U: UserApp<Self, G>>(
@@ -212,12 +260,6 @@ impl WindowBackend for GlfwBackend {
             // present the frame and loop back
             gfx_backend.present(&mut self);
         }
-    }
-
-    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
-        let physical_fb_size = self.window.get_framebuffer_size();
-        self.size_physical_pixels = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
-        self.size_physical_pixels
     }
 
     fn get_settings(&self) -> &BackendSettings {

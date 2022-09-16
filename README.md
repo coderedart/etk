@@ -1,3 +1,7 @@
+
+
+[![checkmate](https://github.com/coderedart/etk/actions/workflows/rust_ci.yml/badge.svg)](https://github.com/coderedart/etk/actions/workflows/rust_ci.yml)
+
 # etk
 egui toolkit
 

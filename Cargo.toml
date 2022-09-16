@@ -12,13 +12,6 @@ egui = { version = "*" }
 console_error_panic_hook = "0.1.6"
 tracing-wasm = "*"
 
-# [dev-dependencies]
-# egui_backend = { path = "crates/egui_backend", features = ["winit", "wgpu"]}
-
-# [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-# egui = { version = "0.19.0" }
-# tracing-subscriber = { version = "*", features = ["env-filter"] }
-# tracing = { version = "*" }
 
 
 [workspace]

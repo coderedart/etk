@@ -142,7 +142,7 @@ impl WindowBackend for WinitBackend {
                     context_builder = context_builder.with_gl_debug_flag(debug);
                 }
                 info!(
-                    "pixel format requirements: {:#?}, gl attributes: {:#?}",
+                    "pixel format requirements: {:?}, gl attributes: {:?}",
                     &context_builder.pf_reqs, &context_builder.gl_attr
                 );
                 let windowed_context = context_builder
@@ -181,7 +181,7 @@ impl WindowBackend for WinitBackend {
                         },
                     };
                     info!(
-                        "backend settings after window creation: {:#?}",
+                        "backend settings after window creation: {:?}",
                         &backend_settings
                     );
 
@@ -269,6 +269,11 @@ impl WindowBackend for WinitBackend {
         self.raw_input.take()
     }
 
+    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
+        let size = self.window.inner_size();
+        [size.width, size.height]
+    }
+
     fn run_event_loop<G: GfxBackend<Self> + 'static, U: UserApp<Self, G> + 'static>(
         mut self,
         mut gfx_backend: G,
@@ -318,11 +323,6 @@ impl WindowBackend for WinitBackend {
                     *control_flow = ControlFlow::Exit;
                 }
             })
-    }
-
-    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
-        let size = self.window.inner_size();
-        [size.width, size.height]
     }
 
     fn get_settings(&self) -> &BackendSettings {

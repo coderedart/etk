@@ -8,6 +8,8 @@ license = "MIT"
 [features]
 default = ["egui_default_fonts"]
 glfw = ["dep:glfw"]
+# glfw-passthrough = ["dep:glfw-passthrough"]
+
 sdl2 = ["dep:sdl2"]
 winit = [
     "dep:winit",
@@ -70,8 +72,8 @@ egui_serde = ["egui/serde"]
 raw-window-handle = "0.4"
 egui = { version = "0.19.0", default-features = false }
 tracing = { version = "0.1.36" }
-intmap = { version = "*" }
-bytemuck = { version = "*" }
+intmap = { version = "2.0.0" }
+bytemuck = { version = "1.12.1" }
 # winit backend. 
 winit = { version = "0.27", optional = true }
 glow = { version = "0.11", optional = true }
@@ -85,10 +87,13 @@ pollster = { version = "0.2", optional = true }
 glutin = { version = "0.29", optional = true }
 
 # glfw backend
-glfw = { version = "*", optional = true }
+glfw = { version = "0.45.0", optional = true }
 # sdl2 backend
 sdl2 = { version = "0.35", features = ["raw-window-handle"], optional = true }
-
+# rend3
+# rend3 = {version = "0.3.0"} # can't use it until it upgrades to use wgpu 0.13
+# glfw passthrough version
+# glfw-passthrough = { version = "0.44.1", optional = true }
 # winit uses these to get html canvas from dom to use for window
 # glow also uses these to get a webgl2 rendering context from canvas
 
@@ -98,8 +103,8 @@ web-sys = { version = "0.3", optional = true }
 getrandom = { version = "0.2", features = [
     "js",
 ], optional = true } # https://github.com/emilk/egui/issues/2009
-js-sys = { version = "*", optional = true }
+js-sys = { version = "0.3.60", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-tracing-subscriber = { version = "*", features = ["env-filter"] }
-tracing = { version = "*" }
+tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
+tracing = { version = "0.1.36" }

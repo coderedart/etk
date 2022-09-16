@@ -1,9 +1,0 @@
-[package]
-name = "egui_render_rend3"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-# rend3 = { version = "0.3.0" } # version conflicts because rend3 on old wgpu

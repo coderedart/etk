@@ -58,13 +58,13 @@ impl Default for NativeGlConfig {
             minor: None,
             es: None,
             core: None,
-            depth_bits: Default::default(),
+            depth_bits: None,
             stencil_bits: Default::default(),
             samples: Default::default(),
             srgb: Some(true),
             double_buffer: Some(true),
             vsync: Some(true),
-            debug: None,
+            debug: Some(false),
         }
     }
 }
