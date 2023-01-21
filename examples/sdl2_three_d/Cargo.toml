@@ -1,0 +1,12 @@
+[package]
+name = "sdl2_three_d"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+egui_backend = { path = "../../crates/egui_backend" }
+egui_window_sdl2 = { path = "../../crates/egui_window_sdl2" }
+egui_render_three_d = { path = "../../crates/egui_render_three_d" }
+tracing-subscriber = { version = "*", features = ["env-filter"] }

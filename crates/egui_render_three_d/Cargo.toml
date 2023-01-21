@@ -1,0 +1,11 @@
+[package]
+name = "egui_render_three_d"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+egui_backend = { path = "../egui_backend" }
+egui_render_glow = { path = "../egui_render_glow" }
+three-d = { version = "*" }

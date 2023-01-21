@@ -5,14 +5,39 @@ edition = "2021"
 description = "Egui's toolkit"
 license = "MIT"
 
+[lib]
+crate_type = ["lib","cdylib"]
+
+[features]
+# default = ["passthrough"]
+passthrough = ["dep:egui_window_glfw_passthrough"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-egui_backend = { path = "crates/egui_backend", features = ["winit", "wgpu"]}
+tracing = {version = "*"}
+tracing-subscriber ={ version = "*"}
+egui_backend = { path = "crates/egui_backend" }
 egui = { version = "*" }
 console_error_panic_hook = "0.1.6"
 tracing-wasm = "*"
+egui_window_winit = { version = "*", path = "crates/egui_window_winit" }
+egui_render_wgpu = { version = "*", path = "crates/egui_render_wgpu" }
+egui_window_glfw_passthrough = { version = "*", path = "crates/egui_window_glfw_passthrough", optional = true }
 
+[target.'cfg(target_os = "android")'.dependencies]
+tracing-android = {version = "*"}
+[package.metadata.android.sdk]
+min_sdk_version = 29
+target_sdk_version = 33
 
 
 [workspace]
-members = ["crates/egui_backend"]
+members = [
+    "crates/egui_backend",
+    "crates/egui_window_glfw_passthrough",
+    "crates/egui_window_winit",
+    "crates/egui_render_wgpu",
+    "crates/egui_window_sdl2",
+    "crates/egui_render_glow",
+    "crates/egui_render_three_d",
+    "examples/*"
+]

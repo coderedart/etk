@@ -8,13 +8,13 @@ use tao::event_loop::{ControlFlow, EventLoop};
 use tao::{event, keyboard::ModifiersState};
 use tao::{event::MouseButton, window::WindowBuilder};
 
-/// settings that you provide to tao backend
+/// config that you provide to tao backend
 #[derive(Debug)]
-pub struct TaoSettings {
+pub struct TaoConfig {
     /// window title
     pub title: String,
 }
-impl Default for TaoSettings {
+impl Default for TaoConfig {
     fn default() -> Self {
         Self {
             title: "egui tao window".to_string(),
@@ -45,20 +45,19 @@ pub struct TaoBackend {
     pub latest_resize_event: bool,
     /// ???
     pub should_close: bool,
-    pub backend_settings: BackendSettings,
+    pub backend_config: BackendConfig,
 }
 
 impl WindowBackend for TaoBackend {
-    type Configuration = TaoSettings;
-    fn new(_config: Self::Configuration, backend_settings: BackendSettings) -> Self
-    where
-        Self: Sized,
+    type Configuration = TaoConfig;
+    fn new(_config: Self::Configuration, backend_config: BackendConfig) -> Self
+
     {
         let el = EventLoop::new();
         #[allow(unused_mut)]
         let mut window_builder = WindowBuilder::new().with_resizable(true);
 
-        let window = match backend_settings.gfx_api_type.clone() {
+        let window = match backend_config.gfx_api_type.clone() {
             GfxApiType::Vulkan | GfxApiType::NoApi => window_builder
                 .build(&el)
                 .expect("failed ot create tao window"),
@@ -98,7 +97,7 @@ impl WindowBackend for TaoBackend {
             frame_events: Vec::new(),
             latest_resize_event: true,
             should_close: false,
-            backend_settings,
+            backend_config,
         }
     }
 
@@ -163,8 +162,8 @@ impl WindowBackend for TaoBackend {
         [size.width, size.height]
     }
 
-    fn get_settings(&self) -> &BackendSettings {
-        &self.backend_settings
+    fn get_config(&self) -> &BackendConfig {
+        &self.backend_config
     }
 }
 unsafe impl HasRawWindowHandle for TaoBackend {

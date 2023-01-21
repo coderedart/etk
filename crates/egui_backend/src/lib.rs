@@ -1,100 +1,68 @@
 //! `egui_backend` crate primarily provides traits to abstract away Window and Rendering parts of egui backends.
-//! this allows us to use any compatible (see `WARNING` below) window backend with any render backend crate.
+//! this allows us to use any compatible window backend with any gfx backend crate.
 //!
-//! this crate can provides 4 traits:
-//! 1. `WindowBackend`: implemented by window backends
-//! 2. `OpenGLWindowContext` : specific to Native openGL. Window Backends which support OpengGL can implement this trait
-//! 3. `GfxBackend<W: WindowBackend>`: implemented by rendering backends for particular or any window backends
-//! 4. `UserApp<W: WindowBackend, G: GfxBackend>`: implemented by egui users for a particular combination or any combination of Window or Gfx Backends
+//! egui is an immediate mode gui library. The lifecycle of egui in every frame goes like this:
+//! 1. takes input from the window backend. eg: mouse position, keyboard events, resize..
+//! 2. constructs gui objects like windows / panels / buttons etc..
+//! 3. outputs gpu friendly data to be drawn by a gfx backend.
+//!
+//! So, we need a WindowBackend to provide input to egui and a GfxBackend to draw egui's output.
+//! egui project already provides a crate called `eframe` for this pupose using `winit` on desktop, custom backend on web and `wgpu`/`glow` for rendering.
+//! But it exposes a very limited api.
+//! `egui_backend` crate instead is to enable separation of window + gfx concerns using traits.
+//! This allows someone to only work on winit backend, and leave gfx backend work to someone else. And because of these common traits,
+//! they will all work without having to write any specific glue code.
+//!
+//! this crate provides 4 traits:
+//! 1. `WindowBackend`: implemented by window backends like winit, glfw, sdl2 etc..
+//! 2. `GfxBackend<W: WindowBackend>`: implemented by rendering backends for particular or any window backends
+//! 3. `UserApp<W: WindowBackend, G: GfxBackend>`: implemented by egui users for a particular combination or any combination of Window / Gfx Backends
 //!
 //! look at the docs of the relevant trait to learn more.
 //!
-//! WARNING:
-//! the primary goal was to separate window and rendering completely.
-//! It would work for modern graphics api backends like vulkan, metal, dx12 etc..
-//! but for opengl, window parts are often mixed with opengl parts.
-//! for example, opengl needs functions like `swap_buffers`, `make_context_current` or `get_proc_address` which are provided
-//! by the window crates like sdl2 / glfw / glutin. this is made complicated by multi-threading or the fact that opengl context
-//! is often created with a window rather than a separate api etc..
-//!
-//! If we remove support for OpenGL, we can simplify this crate A LOT.
-//!
-//! TODO: remove OpenGL into a separate crate / trait once webgpu spec is stable
-//!
-//! <https://developer.chrome.com/en/docs/web-platform/webgpu/> origin trials of webgpu in chrome ends on 1st Feb, 2023.
-//!
+//! reminder: https://developer.chrome.com/en/docs/web-platform/webgpu/ origin trials of webgpu in chrome ends on 1st Feb, 2023.
 
 pub use egui;
 pub use raw_window_handle;
 
-pub mod gfx_backends;
-mod opengl;
-pub mod window_backends;
 use egui::{ClippedPrimitive, RawInput, TexturesDelta};
-pub use opengl::*;
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 /// Intended to provide a common struct which all window backends accept as their configuration.
-/// a lot of the settings are `Option<T>`, so that users can let the window backends choose defaults when user doesn't care.
-///
-/// After the creation of a window, the backend must set all the options to `Some(T)`. for example, if the user set the
-/// srgb field of opengl options to `None`, and the backend must set that field to `Some(true)` or `Some(false)` so that the
-/// renderer can know whether the framebuffer (surface) supports srgb or not.
+/// In future, might add more options like initial window size/title etc..
 #[derive(Debug, Clone, Default)]
-pub struct BackendSettings {
+pub struct BackendConfig {
     /// The kind of graphics api that we plan to use the window with
     pub gfx_api_type: GfxApiType,
 }
-/// Different kinds of gfx APIs and their relevant settings.
+/// Gfx Apis like Opengl (Gl-es) require some special config while creating a window.
+/// OTOH, modern APIs like metal/vk/dx deal with configuration themselves after creating a window.
+/// So, we need to tell window backend to choose whether we want a Gl or Non-GL kinda variant.
 #[derive(Debug, Clone)]
 pub enum GfxApiType {
-    /// when we want toe window to decide.
+    /// when we want the gfx backend to decide the api.
     /// usually, this means that we don't want a opengl window and the renderer will choose the right api (vk/dx/mtl etc..)
     NoApi,
-    /// specifically request vulkan api. just like `NoApi`, it will avoid creation of an opengl context with the window.
-    /// people might choose vulkan specifically in certain situations (like transparent framebuffer)
-    #[cfg(not(target_arch = "wasm32"))]
-    Vulkan,
-    /// Tell the window backend to create an OpenGL Window
-    /// lots of settings to choose from :)
-    #[cfg(not(target_arch = "wasm32"))]
-    OpenGL {
-        /// contains all the settings that are usually provided by a OpenGL window creation library
-        native_config: NativeGlConfig,
-    },
-    /// intended for WebGL2 + winit combinations. can be used by either wgpu or glow.
-    /// until webgpu is available in beta / stable, this is the only api available on web
-    #[cfg(target_arch = "wasm32")]
-    WebGL2 {
-        /// only tested on winit atm
-        /// if this is None, window backend will create a canvas and add it to DOM's body
-        /// if this is Some(id), we will get the canvas element with this id and use it as the window's backing canvas.
-        canvas_id: Option<String>,
-        /// settings to use during context creation from a canvas element.
-        webgl_config: WebGlConfig,
-    },
+    /// This means that we require a GL api.
+    /// on glfw/sdl2, it means they will create the necessary opengl contexts and make them current.
+    /// the renderer will use the functions `get_proc_address` or `swap_buffers`.
+    GL,
 }
-#[cfg(target_arch = "wasm32")]
+
 impl Default for GfxApiType {
     fn default() -> Self {
-        Self::WebGL2 {
-            canvas_id: Some("egui_winit_canvas".to_string()),
-            webgl_config: Default::default(),
-        }
+        #[cfg(target = "wasm32-unknown-unknown")]
+        return Self::GL;
+        #[cfg(not(target = "wasm32-unknown-unknown"))]
+        return Self::NoApi;
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
-impl Default for GfxApiType {
-    fn default() -> Self {
-        Self::Vulkan
-    }
-}
+
 /// This is the output from egui that renderer needs.
-/// meshes and textures_delta come from egui directly. but
+/// meshes and textures_delta come from egui directly.
 /// window backend needs to also provide screensize in logical coords, scale and physical framebuffer
 /// size in pixels.
-///
-pub struct EguiGfxOutput {
+pub struct EguiGfxData {
     /// from output of `Context::end_frame()`
     pub meshes: Vec<ClippedPrimitive>,
     /// from output of `Context::end_frame()`
@@ -110,85 +78,90 @@ pub struct EguiGfxOutput {
 /// 2. convert events to egui raw input and give it to egui context's begin_frame
 /// 3. provide framebuffer resize (optional) details to Gfx Backend when preparing the frame (surface / swapchain etc..)
 /// 4. run event loop and call the necessary functions of Gfx and UserApp
-pub trait WindowBackend: HasRawWindowHandle {
+pub trait WindowBackend: Sized {
     /// This will be WindowBackend's configuration. if necessary, just add Boxed closures as its
     /// fields and run them before window creation, after window creation etc.. to provide maximum
     /// configurability to users
-    type Configuration: Default;
-
+    type Configuration: Default + Sized;
+    type WindowType: HasRawDisplayHandle + HasRawWindowHandle + Sized;
     /// Create a new window backend. and return info needed for the GfxBackend creation and rendering
     /// config is the custom configuration of a specific window backend
-    fn new(config: Self::Configuration, backend_settings: BackendSettings) -> Self;
+    fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self;
     /// This frame's events gather into rawinput and to be presented to egui's context
     fn take_raw_input(&mut self) -> RawInput;
-
+    /// This gives us the "Window" struct of this particular backend. should implement raw window handle apis.
+    /// if this is None, it means window hasn't been created, or has been destroyed for some reason.
+    /// usually on android, this means the app is suspended.
+    fn get_window(&mut self) -> Option<&mut Self::WindowType>;
     /// sometimes, the frame buffer size might have changed and the event is still not received.
     /// in those cases, wgpu / vulkan like render apis will throw an error if you try to acquire swapchain
     /// image with an outdated size. you will need to provide the *latest* size for succesful creation of surface frame.
-    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2];
+    /// if the return value is `None`, the window doesn't exist yet. eg: on android, after suspend but before resume event.
+    fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]>;
 
     /// Run the event loop. different backends run it differently, so they all need to take care and
     /// call the Gfx or UserApp functions at the right time.
-    fn run_event_loop<G: GfxBackend<Self> + 'static, U: UserApp<Self, G> + 'static>(
+    fn run_event_loop<G: GfxBackend<Self> + 'static, U: UserAppData<Self, G> + 'static>(
         self,
         gfx_backend: G,
         user_app: U,
     );
-
-    fn get_settings(&self) -> &BackendSettings;
+    /// config if GfxBackend needs them. usually tells the GfxBackend whether we have an opengl or non-opengl window.
+    /// for example, if a vulkan backend gets a window with opengl, it can gracefully panic instead of probably segfaulting.
+    /// this also serves as an indicator for opengl gfx backends, on whether this backend supports `swap_buffers` or `get_proc_address` functions.
+    fn get_config(&self) -> &BackendConfig;
+    /// optional. only implemented by gl windowing libraries like glfw/sdl2 which hold the gl context with Window
+    /// gfx backends like glow (or raw opengl) will call this if needed.
+    /// panic! if your WindowBackend doesn't implemented this functionality (eg: winit)
+    fn swap_buffers(&mut self) {
+        unimplemented!("swap buffers is not implemented for this window backend");
+    }
+    /// get openGL function addresses. optional, just like `Self::swap_buffers`.
+    /// panic! if it doesn't apply to your WindowBackend. eg: winit.
+    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
+        unimplemented!(
+            "get_proc_address is not implemented for this window backend. called with {symbol}"
+        );
+    }
 }
 
-/// This is the trait to implement for Gfx backends. these could be Gfx APIs like opengl or vulkan or wgpu etc..
+/// Trait for Gfx backends. these could be Gfx APIs like opengl or vulkan or wgpu etc..
 /// or higher level renderers like three-d or rend3 or custom renderers etc..
 ///
 /// This trait is generic over the WindowBackend because some renderers might want to only work for a specific
 /// window backend.
 ///
-/// for example, an sdl2 renderer might only want to work with a specific sdl2 window backend. and
+/// for example, an sdl2_gfx renderer might only want to work with a specific sdl2 window backend. and
 /// another person might want to make a different sdl2 renderer, and can reuse the old sdl2 window backend.
-///
-///
-pub trait GfxBackend<W: WindowBackend + ?Sized> {
-    /// similar to WindowBakendSettings. just make them as complicated or as simple as you want.
+pub trait GfxBackend<W: WindowBackend> {
+    /// similar to WindowBakendConfig. just make them as complicated or as simple as you want.
     type Configuration: Default;
 
-    /// create a new GfxBackend using info from window backend and custom settings struct
-    /// `WindowBackend` trait provides the backend settings, which can be used by the renderer to check
+    /// create a new GfxBackend using info from window backend and custom config struct
+    /// `WindowBackend` trait provides the backend config, which can be used by the renderer to check
     /// for compatibility.
     ///
     /// for example, a glow renderer might want an opengl context. but if the window was created without one,
     /// the glow renderer should panic.
-    fn new(window_backend: &mut W, settings: Self::Configuration) -> Self;
+    fn new(window_backend: &mut W, config: Self::Configuration) -> Self;
 
-    /// prepare the surface / swapchain etc.. for rendering. this should be called right after
-    /// WindowBackend has finished processing events so that the Gfx backend could resize the framebuffer
-    /// if there's any resize event.
-    ///
-    /// if the framebuffer needs to resize due to a resize event or scale change event, the bool would be true.
-    ///
-    /// the gfx backend can get the latest size (in physical pixels) using `WindowBackend::get_live_physical_size_framebuffer` fn.
+    /// Android only. callend on app suspension, which destroys the window.
+    /// so, will need to destroy the `Surface` and recreate during resume event.
+    fn suspend(&mut self, _window_backend: &mut W) {
+        unimplemented!("This window backend doesn't implement suspend event");
+    }
+    /// Android Only. called when app is resumed after suspension.
+    /// On Android, window can only be created on resume event. so, you cannot create a `Surface` before entering the event loop.
+    /// We can now create a new surface (swapchain) for the window.
+    /// on other platforms, it **may** be called once at startup after entering eventloop, but we can ignore it.
+    fn resume(&mut self, _window_backend: &mut W) {}
+    /// prepare the surface / swapchain etc.. by acquiring an image for the current frame.
+    /// `framebuffer_needs_resize` indicates a window resize.
+    /// use `WindowBackend::get_live_physical_size_framebuffer` fn to resize your swapchain.
     fn prepare_frame(&mut self, framebuffer_needs_resize: bool, window_backend: &mut W);
 
-    /// reference : <https://github.com/gfx-rs/wgpu/wiki/Encapsulating-Graphics-Work>
-    /// specific quote about submitting commands
-    /// > use a fewest possible render passes as possible...
-    /// > Middleware should not call queue.submit unless absolutely necessary. It is an extremely expensive function and should only be called once per frame.
-    /// > If the middleware generates a CommandBuffer, hand that buffer back to the user to submit themselves.
-    /// and then we have the reason to "prepare render":
-    /// > ... Because render passes need all data they use to last as long as they do, all resources that are going to be used in the render pass need to be created ahead of time.
-    ///
-    /// The main intent though is that this trait will be implemented by both "low level gfx apis" like wgpu or opengl or vulkan etc.. as well as high level renderers.
-    /// the renderers might collect all kinds of commands from `UserApp`'s run function where the user might want to draw things like shapes or objects like circles etc...
-    /// the renderers could have just collected them in random order, but decide to batch them up by bindgroups like textures (sprites) or by shaders (shapes / lighting) etc..
-    /// this function can be used to do that kind of stuff.
-    /// we submit the egui data at this point so the renderer can upload to buffers or prepare bindgroups / uniforms etc...
-    ///
-    /// Basically, this is the stage where renderers can sort meshes, upload data / textures, prepare bindgroups, create mipmaps and other such tasks to prepare for the rendering stage.
-    fn prepare_render(&mut self, egui_gfx_output: EguiGfxOutput);
-
     /// This is where the renderers will start creating renderpasses, issue draw calls etc.. using the data previously prepared.
-    ///
-    fn render(&mut self);
+    fn render(&mut self, egui_gfx_data: EguiGfxData);
 
     /// This is called at the end of the frame. after everything is drawn, you can now present
     /// on opengl, you might call `WindowBackend::swap_buffers`.
@@ -198,7 +171,7 @@ pub trait GfxBackend<W: WindowBackend + ?Sized> {
 
 /// This is the trait most users care about. just implement this trait and you can use any `WindowBackend` or `GfxBackend` to run your egui app.
 ///
-/// First, if you don't particular care about the window or gfx backends used to run your app, you can just use a generic impl
+/// if you don't particular care about the window or gfx backends used to run your app, you can just use a generic impl
 /// ```rust
 /// pub struct App;
 /// impl<W: WindowBackend, G: GfxBackend<W>> UserApp<W, G> for App {
@@ -210,16 +183,12 @@ pub trait GfxBackend<W: WindowBackend + ?Sized> {
 /// }
 /// ```
 ///
-/// Second, if you want to use functionality from a particular Backend like drawing with wgpu, use specific generic types on your impl.
+/// if you want to use functionality from a particular Backend like drawing with wgpu, use specific generic types on your impl.
 /// ```rust
 /// pub struct App;
 /// impl UserApp<WinitBackend, WgpuBackend> for App {
 ///     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut WinitBackend, gfx_backend: &mut WgpuBackend) {
-///         egui::Window::new("New Window").show(egui_context, |ui| {
-///             ui.label("hello label");
-///         });
-///         /* do something with window_backend or gfx_backend */
-///         // most of the data is public in both of those backends so that user can see and understand exactly what's going on.
+///         /* do something with winit or wgpu */
 ///     }    
 /// }
 /// ```
@@ -229,6 +198,24 @@ pub trait GfxBackend<W: WindowBackend + ?Sized> {
 /// or `post_render` which will be called after `GfxBackend::render` but before `GfxBackend::present` etc..
 ///
 /// it will all depend on the demands of users and backend implementors who might need more flexibility
-pub trait UserApp<W: WindowBackend + ?Sized, G: GfxBackend<W> + ?Sized> {
-    fn run(&mut self, egui_context: &egui::Context, window_backend: &mut W, gfx_backend: &mut G);
+pub trait UserAppData<W: WindowBackend, G: GfxBackend<W>> {
+    /// This function is provided a
+    /// 1. mutable reference to the data/struct which this is implemented for
+    /// 2. egui context.
+    /// 3. raw_input. use the raw input to start a frame in egui context and draw your gui stuff
+    /// 4. window backend. in case you want something like window size or whatever
+    /// 5. gfx backend. this is what you use to draw stuff or fill up some data buffers/textures before using them during rendering callbacks etc..
+    ///
+    /// and this function returns the egui fulloutput which you will get by ending the frame in egui context.
+    ///
+    /// you can use the rawinput to get events like cursor movement, button presses/releases, keyboard key press/releases, window resize events etc.
+    /// and you can filter them out too. like only restricting egui to left half of your window by modifying the resize event before starting egui context.
+    /// you can also use the fulloutput to add accesskit or other useful features without support from windowing/gfx backends.
+    fn run(
+        &mut self,
+        egui_context: &egui::Context,
+        raw_input: egui::RawInput,
+        window_backend: &mut W,
+        gfx_backend: &mut G,
+    ) -> egui::FullOutput;
 }

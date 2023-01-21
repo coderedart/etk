@@ -1,15 +1,15 @@
-use crate::*;
 use egui::TextureId;
+use egui_backend::*;
 use tracing::{info, warn};
 
 use bytemuck::cast_slice;
 
 use intmap::IntMap;
-const EGUI_VS: &str = include_str!("glsl_shaders/egui.vert");
-#[cfg(not(target_arch = "wasm32"))]
-const EGUI_FS: &str = include_str!("glsl_shaders/egui.frag");
-#[cfg(target_arch = "wasm32")]
-const EGUI_FS: &str = include_str!("glsl_shaders/egui_webgl.frag");
+const EGUI_VS: &str = include_str!("../../../shaders/egui.vert");
+#[cfg(not(target = "wasm32-unknown-unknown"))]
+const EGUI_FS: &str = include_str!("../../../shaders/egui.frag");
+#[cfg(target = "wasm32-unknown-unknown")]
+const EGUI_FS: &str = include_str!("../../../shaders/egui_webgl.frag");
 
 use std::sync::Arc;
 
@@ -21,130 +21,168 @@ macro_rules! glow_error {
     ($glow_context: ident) => {
         let error_code = $glow_context.get_error();
         if error_code != glow::NO_ERROR {
-            panic!("glow error: {} at line {}", error_code, line!());
+            tracing::error!("glow error: {} at line {}", error_code, line!());
         }
     };
 }
+
+/// these are config to be provided to browser when requesting a webgl context
+///
+/// refer to `WebGL context attributes:` config in the link: <https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/getContext>
+///
+/// alternatively, the spec lists all attributes here <https://registry.khronos.org/webgl/specs/latest/1.0/#5.2>
+///
+/// ```js
+/// WebGLContextAttributes {
+///     boolean alpha = true;
+///     boolean depth = true;
+///     boolean stencil = false;
+///     boolean antialias = true;
+///     boolean premultipliedAlpha = true;
+///     boolean preserveDrawingBuffer = false;
+///     WebGLPowerPreference powerPreference = "default";
+///     boolean failIfMajorPerformanceCaveat = false;
+///     boolean desynchronized = false;
+/// };
+///
+/// ```
+///
+/// we will only support WebGL2 for now. WebGL2 is available in 90+ % of all active devices according to <https://caniuse.com/?search=webgl2>.
+#[derive(Debug, Clone)]
+pub struct WebGlConfig {
+    pub alpha: Option<bool>,
+    pub depth: Option<bool>,
+    pub stencil: Option<bool>,
+    pub antialias: Option<bool>,
+    pub premultiplied_alpha: Option<bool>,
+    pub preserve_drawing_buffer: Option<bool>,
+    /// possible values are "default", "high-performance", "low-power"
+    /// `None`: default.
+    /// `Some(true)`: lower power
+    /// `Some(false)`: high performance
+    pub low_power: Option<bool>,
+    pub fail_if_major_performance_caveat: Option<bool>,
+    pub desynchronized: Option<bool>,
+}
+impl Default for WebGlConfig {
+    fn default() -> Self {
+        Self {
+            alpha: Default::default(),
+            depth: Default::default(),
+            stencil: Default::default(),
+            antialias: Default::default(),
+            premultiplied_alpha: Default::default(),
+            preserve_drawing_buffer: Default::default(),
+            low_power: Default::default(),
+            fail_if_major_performance_caveat: Default::default(),
+            desynchronized: Default::default(),
+        }
+    }
+}
+
 pub struct GlowBackend {
     pub glow_context: Arc<GlowContext>,
     pub framebuffer_size: [u32; 2],
     pub painter: Painter,
 }
 
-impl GlowBackend {
-    pub unsafe fn destroy(&mut self) {
-        self.painter.destroy(&self.glow_context);
+impl Drop for GlowBackend {
+    fn drop(&mut self) {
+        unsafe { self.painter.destroy(&self.glow_context) };
     }
 }
 
-impl<
-        #[cfg(not(target_arch = "wasm32"))] W: WindowBackend + crate::OpenGLWindowContext,
-        #[cfg(target_arch = "wasm32")] W: WindowBackend,
-    > GfxBackend<W> for GlowBackend
-{
-    type Configuration = ();
+pub struct GlowConfig {
+    pub webgl_config: WebGlConfig,
+}
+impl Default for GlowConfig {
+    fn default() -> Self {
+        Self {
+            webgl_config: Default::default(),
+        }
+    }
+}
+// check srgb support??
+// and maybe enable debug support.
+// if let Some(debug) = native_config.debug {
+//     if debug {
+//         gl.enable(glow::DEBUG_OUTPUT);
+//         gl.enable(glow::DEBUG_OUTPUT_SYNCHRONOUS);
+//         assert!(gl.supports_debug());
+//         gl.debug_message_callback(
+//             |source, error_type, error_id, severity, error_str| {
+//                 match severity {
+//                     glow::DEBUG_SEVERITY_NOTIFICATION => tracing::debug!(
+//                         source, error_type, error_id, severity, error_str
+//                     ),
+//                     glow::DEBUG_SEVERITY_LOW => {
+//                         tracing::info!(
+//                             source, error_type, error_id, severity, error_str
+//                         )
+//                     }
+//                     glow::DEBUG_SEVERITY_MEDIUM => {
+//                         tracing::warn!(
+//                             source, error_type, error_id, severity, error_str
+//                         )
+//                     }
+//                     glow::DEBUG_SEVERITY_HIGH => tracing::error!(
+//                         source, error_type, error_id, severity, error_str
+//                     ),
+//                     rest => panic!("unknown severity {rest}"),
+//                 };
+//             },
+//         );
+//         glow_error!(gl);
+//     }
+// }
+impl<W: WindowBackend> GfxBackend<W> for GlowBackend {
+    type Configuration = GlowConfig;
 
-    fn new(window_backend: &mut W, _settings: Self::Configuration) -> Self {
-        let glow_context = Arc::new(unsafe {
-            match window_backend.get_settings().gfx_api_type.clone() {
-                #[cfg(not(target_arch = "wasm32"))]
-                crate::GfxApiType::OpenGL { native_config } => {
-                    let gl =
-                        glow::Context::from_loader_function(|s| window_backend.get_proc_address(s));
+    fn new(window_backend: &mut W, _config: Self::Configuration) -> Self {
+        #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+        let glow_context = {
+            use raw_window_handle::HasRawWindowHandle;
+            use wasm_bindgen::JsCast;
+            let handle_id = match window_backend
+                .get_window()
+                .expect("window backend doesn't have a window yet???")
+                .raw_window_handle()
+            {
+                crate::raw_window_handle::RawWindowHandle::Web(handle_id) => handle_id.id,
+                _ => unimplemented!("non web raw window handles are not supported on wasm32"),
+            };
+            let canvas_node: wasm_bindgen::JsValue = web_sys::window()
+                .and_then(|win| win.document())
+                .and_then(|doc: web_sys::Document| {
+                    doc.query_selector(&format!("[data-raw-handle=\"{}\"]", handle_id))
+                        .ok()
+                })
+                .expect("expected to find single canvas")
+                .into();
+            let canvas_element: web_sys::HtmlCanvasElement = canvas_node.into();
+            let context_options = create_context_options_from_webgl_config(_config.webgl_config);
+            let context = canvas_element
+                .get_context_with_context_options("webgl2", &context_options)
+                .unwrap()
+                .unwrap()
+                .dyn_into()
+                .unwrap();
+            glow::Context::from_webgl2_context(context)
+        };
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
+        let glow_context = unsafe {
+            let gl = glow::Context::from_loader_function(|s| window_backend.get_proc_address(s));
 
-                    let gl_version = gl.version();
-                    info!("glow using gl version: {gl_version:?}");
-                    assert!(
-                        gl_version.major >= 3,
-                        "egui glow only supports opengl major version 3 or above {gl_version:?}"
-                    );
+            let gl_version = gl.version();
+            info!("glow using gl version: {gl_version:?}");
+            assert!(
+                gl_version.major >= 3,
+                "egui glow only supports opengl major version 3 or above {gl_version:?}"
+            );
 
-                    assert_eq!(
-                        native_config.double_buffer,
-                        Some(true),
-                        "egui glow only supports double buffer"
-                    );
-
-                    // assert!(native_config.minor.unwrap() >= 0, "egui glow only supports opengl minor version ???");
-                    assert_eq!(
-                        native_config.samples, None,
-                        "egui glow doesn't support multi sampling"
-                    );
-                    assert_eq!(
-                        native_config.srgb,
-                        Some(true),
-                        "egui glow only supports srgb compatible surface/ framebuffers"
-                    );
-
-                    if let Some(debug) = native_config.debug {
-                        if debug {
-                            gl.enable(glow::DEBUG_OUTPUT);
-                            gl.enable(glow::DEBUG_OUTPUT_SYNCHRONOUS);
-                            assert!(gl.supports_debug());
-                            gl.debug_message_callback(
-                                |source, error_type, error_id, severity, error_str| {
-                                    match severity {
-                                        glow::DEBUG_SEVERITY_NOTIFICATION => tracing::debug!(
-                                            source, error_type, error_id, severity, error_str
-                                        ),
-                                        glow::DEBUG_SEVERITY_LOW => {
-                                            tracing::info!(
-                                                source, error_type, error_id, severity, error_str
-                                            )
-                                        }
-                                        glow::DEBUG_SEVERITY_MEDIUM => {
-                                            tracing::warn!(
-                                                source, error_type, error_id, severity, error_str
-                                            )
-                                        }
-                                        glow::DEBUG_SEVERITY_HIGH => tracing::error!(
-                                            source, error_type, error_id, severity, error_str
-                                        ),
-                                        rest => panic!("unknown severity {rest}"),
-                                    };
-                                },
-                            );
-                            glow_error!(gl);
-                        }
-                    }
-                    gl
-                }
-                #[cfg(target_arch = "wasm32")]
-                crate::GfxApiType::WebGL2 {
-                    canvas_id,
-                    webgl_config,
-                } => {
-                    use wasm_bindgen::JsCast;
-
-                    let handle_id = match window_backend.raw_window_handle() {
-                        crate::raw_window_handle::RawWindowHandle::Web(handle_id) => handle_id.id,
-                        _ => {
-                            unimplemented!("non web raw window handles are not supported on wasm32")
-                        }
-                    };
-                    let canvas_node: wasm_bindgen::JsValue = web_sys::window()
-                        .and_then(|win| win.document())
-                        .and_then(|doc: web_sys::Document| {
-                            doc.query_selector(&format!("[data-raw-handle=\"{}\"]", handle_id))
-                                .ok()
-                        })
-                        .expect("expected to find single canvas")
-                        .into();
-                    let canvas_element: web_sys::HtmlCanvasElement = canvas_node.into();
-                    let context_options = create_context_options_from_webgl_config(webgl_config);
-                    let context = canvas_element
-                        .get_context_with_context_options("webgl2", &context_options)
-                        .unwrap()
-                        .unwrap()
-                        .dyn_into()
-                        .unwrap();
-                    glow::Context::from_webgl2_context(context)
-                }
-                _ => {
-                    unimplemented!("egui glow only supports WebGL2 or OpenGL gfx types ")
-                }
-            }
-        });
+            gl
+        };
+        let glow_context: Arc<glow::Context> = Arc::new(glow_context);
         if glow_context.supported_extensions().contains("EXT_sRGB")
             || glow_context.supported_extensions().contains("GL_EXT_sRGB")
             || glow_context
@@ -160,16 +198,27 @@ impl<
         Self {
             glow_context,
             painter,
-            framebuffer_size: window_backend.get_live_physical_size_framebuffer(),
+            framebuffer_size: window_backend.get_live_physical_size_framebuffer().unwrap(),
         }
+    }
+
+    fn suspend(&mut self, _window_backend: &mut W) {
+        unimplemented!("glow render backend doesn't support suspend callback yet");
+    }
+
+    fn resume(&mut self, _window_backend: &mut W) {
+        tracing::warn!("resume does nothing on glow backend");
     }
 
     fn prepare_frame(&mut self, framebuffer_size_update: bool, window_backend: &mut W) {
         if framebuffer_size_update {
-            let fb_size = window_backend.get_live_physical_size_framebuffer();
-            unsafe {
-                self.glow_context
-                    .viewport(0, 0, fb_size[0] as i32, fb_size[1] as i32);
+            if let Some(fb_size) = window_backend.get_live_physical_size_framebuffer() {
+                self.framebuffer_size = fb_size;
+                self.painter.screen_size_physical = fb_size;
+                unsafe {
+                    self.glow_context
+                        .viewport(0, 0, fb_size[0] as i32, fb_size[1] as i32);
+                }
             }
         }
         unsafe {
@@ -178,112 +227,77 @@ impl<
         }
     }
 
-    fn prepare_render(&mut self, egui_gfx_output: EguiGfxOutput) {
+    fn render(&mut self, egui_gfx_data: EguiGfxData) {
         unsafe {
             self.painter
-                .prepare_render(&self.glow_context, egui_gfx_output, self.framebuffer_size)
-        };
-    }
-
-    fn render(&mut self) {
-        unsafe {
+                .prepare_render(&self.glow_context, egui_gfx_data);
             self.painter.render(&self.glow_context);
         }
     }
 
-    fn present(&mut self, window_backend: &mut W) {
-        // on wasm, there's no swap buffers.. the browser takes care of it automatically.
-        #[cfg(not(target_arch = "wasm32"))]
+    fn present(&mut self, _window_backend: &mut W) {
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
         {
-            crate::OpenGLWindowContext::swap_buffers(window_backend);
+            _window_backend.swap_buffers();
         }
+        // on wasm, there's no swap buffers.. the browser takes care of it automatically.
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
 fn create_context_options_from_webgl_config(webgl_config: crate::WebGlConfig) -> js_sys::Object {
-    use wasm_bindgen::JsValue;
-
     let context_options = js_sys::Object::new();
-    if let Some(alpha) = webgl_config.alpha {
-        js_sys::Reflect::set(
-            &context_options,
-            &"alpha".into(),
-            &if alpha { JsValue::TRUE } else { JsValue::FALSE },
-        )
-        .expect("Cannot create context options");
+    if let Some(value) = webgl_config.alpha {
+        js_sys::Reflect::set(&context_options, &"alpha".into(), &value.into()).unwrap();
     }
-    if let Some(antialias) = webgl_config.antialias {
-        js_sys::Reflect::set(
-            &context_options,
-            &"antialias".into(),
-            &if antialias {
-                JsValue::TRUE
-            } else {
-                JsValue::FALSE
-            },
-        )
-        .expect("Cannot create context options");
+    if let Some(value) = webgl_config.antialias {
+        js_sys::Reflect::set(&context_options, &"antialias".into(), &value.into()).unwrap();
     }
-    if let Some(depth) = webgl_config.depth {
-        js_sys::Reflect::set(
-            &context_options,
-            &"depth".into(),
-            &if depth { JsValue::TRUE } else { JsValue::FALSE },
-        )
-        .expect("Cannot create context options");
+    if let Some(value) = webgl_config.depth {
+        js_sys::Reflect::set(&context_options, &"depth".into(), &value.into()).unwrap();
     }
     if let Some(value) = webgl_config.desynchronized {
-        js_sys::Reflect::set(
-            &context_options,
-            &"desynchronized".into(),
-            &if value { JsValue::TRUE } else { JsValue::FALSE },
-        )
-        .expect("Cannot create context options");
+        js_sys::Reflect::set(&context_options, &"desynchronized".into(), &value.into()).unwrap();
     }
     if let Some(value) = webgl_config.fail_if_major_performance_caveat {
         js_sys::Reflect::set(
             &context_options,
             &"failIfMajorPerformanceCaveat".into(),
-            &if value { JsValue::TRUE } else { JsValue::FALSE },
+            &value.into(),
         )
-        .expect("Cannot create context options");
+        .unwrap();
     }
     if let Some(value) = webgl_config.low_power {
         js_sys::Reflect::set(
             &context_options,
             &"powerPreference".into(),
             &if value {
-                JsValue::from_str("low-power")
+                "low-power"
             } else {
-                JsValue::from_str("high-performance")
-            },
+                "high-performance"
+            }
+            .into(),
         )
-        .expect("Cannot create context options");
+        .unwrap();
     }
     if let Some(value) = webgl_config.premultiplied_alpha {
         js_sys::Reflect::set(
             &context_options,
             &"premultipliedAlpha".into(),
-            &if value { JsValue::TRUE } else { JsValue::FALSE },
+            &value.into(),
         )
-        .expect("Cannot create context options");
+        .unwrap();
     }
     if let Some(value) = webgl_config.preserve_drawing_buffer {
         js_sys::Reflect::set(
             &context_options,
             &"preserveDrawingBuffer".into(),
-            &if value { JsValue::TRUE } else { JsValue::FALSE },
+            &value.into(),
         )
-        .expect("Cannot create context options");
+        .unwrap();
     }
     if let Some(value) = webgl_config.stencil {
-        js_sys::Reflect::set(
-            &context_options,
-            &"stencil".into(),
-            &if value { JsValue::TRUE } else { JsValue::FALSE },
-        )
-        .expect("Cannot create context options");
+        js_sys::Reflect::set(&context_options, &"stencil".into(), &value.into()).unwrap();
     }
     context_options
 }
@@ -295,8 +309,8 @@ pub struct GpuTexture {
 }
 
 /// Egui Painter using glow::Context
-/// unlike
 pub struct Painter {
+    /// Most of these objects are created at startup
     pub linear_sampler: Sampler,
     pub nearest_sampler: Sampler,
     pub managed_textures: IntMap<GpuTexture>,
@@ -306,9 +320,11 @@ pub struct Painter {
     pub ebo: Buffer,
     pub u_screen_size: UniformLocation,
     pub u_sampler: UniformLocation,
-    pub clipped_primitives: Vec<ClippedPrimitive>,
+    pub clipped_primitives: Vec<egui::ClippedPrimitive>,
     pub textures_to_delete: Vec<TextureId>,
+    /// updated every frame from the egui gfx output struct
     pub screen_size_logical: [f32; 2],
+    /// must update on framebuffer resize.
     pub screen_size_physical: [u32; 2],
 }
 
@@ -354,10 +370,9 @@ impl Painter {
     pub unsafe fn prepare_render(
         &mut self,
         glow_context: &glow::Context,
-        egui_gfx_output: EguiGfxOutput,
-        screen_size_physical: [u32; 2],
+        egui_gfx_output: EguiGfxData,
     ) {
-        let EguiGfxOutput {
+        let EguiGfxData {
             meshes,
             textures_delta,
             screen_size_logical,
@@ -365,7 +380,6 @@ impl Painter {
         self.textures_to_delete = textures_delta.free;
         self.clipped_primitives = meshes;
         self.screen_size_logical = screen_size_logical;
-        self.screen_size_physical = screen_size_physical;
         glow_error!(glow_context);
 
         // update textures
@@ -403,7 +417,7 @@ impl Painter {
                 egui::ImageData::Color(_) => todo!(),
                 egui::ImageData::Font(font_image) => (
                     font_image
-                        .srgba_pixels(1.0)
+                        .srgba_pixels(None)
                         .flat_map(|c| c.to_array())
                         .collect(),
                     font_image.size,
@@ -457,7 +471,7 @@ impl Painter {
         glow_context.enable(glow::SCISSOR_TEST);
         glow_context.disable(glow::DEPTH_TEST);
         glow_error!(glow_context);
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target = "wasm32-unknown-unknown"))]
         glow_context.enable(glow::FRAMEBUFFER_SRGB);
 
         glow_error!(glow_context);
@@ -505,6 +519,7 @@ impl Painter {
             let width = clip_max_x - clip_min_x;
             let height = clip_max_y - clip_min_y;
             glow_context.scissor(clip_x, clip_y, width, height);
+
             match clipped_primitive.primitive {
                 egui::epaint::Primitive::Mesh(ref mesh) => {
                     glow_context.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));

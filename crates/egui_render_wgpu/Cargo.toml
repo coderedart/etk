@@ -1,0 +1,17 @@
+[package]
+name = "egui_render_wgpu"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wgpu = { version = "0.14", features = ["webgl"] }
+pollster = { version = "0.2" }
+tracing = { version = "0.1" }
+intmap = { version = "2.0" }
+bytemuck = { version = "1.12" }
+raw-window-handle = "0.5"
+egui_backend = { version = "*", path = "../egui_backend", features = [
+    "egui_bytemuck",
+] }

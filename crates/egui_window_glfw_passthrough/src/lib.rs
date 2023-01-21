@@ -1,18 +1,15 @@
 use egui::{Event, Key, PointerButton, Pos2, RawInput};
-use egui_backend::raw_window_handle::HasRawWindowHandle;
-use egui_backend::WindowBackend;
 use egui_backend::*;
+pub use glfw;
 use glfw::Action;
 use glfw::ClientApiHint;
 use glfw::Context;
 use glfw::Glfw;
-use glfw::OpenGlProfileHint;
-use glfw::SwapInterval;
+use glfw::StandardCursor;
 use glfw::WindowEvent;
 use glfw::WindowHint;
+use raw_window_handle::*;
 use std::sync::mpsc::Receiver;
-
-pub use glfw;
 
 pub struct GlfwBackend {
     pub glfw: glfw::Glfw,
@@ -22,9 +19,10 @@ pub struct GlfwBackend {
     pub scale: [f32; 2],
     pub cursor_pos_physical_pixels: [f32; 2],
     pub raw_input: RawInput,
+    pub cursor_icon: glfw::StandardCursor,
     pub frame_events: Vec<WindowEvent>,
     pub resized_event_pending: bool,
-    pub backend_settings: BackendSettings,
+    pub backend_config: BackendConfig,
 }
 
 unsafe impl HasRawWindowHandle for GlfwBackend {
@@ -32,14 +30,9 @@ unsafe impl HasRawWindowHandle for GlfwBackend {
         self.window.raw_window_handle()
     }
 }
-
-impl OpenGLWindowContext for GlfwBackend {
-    fn swap_buffers(&mut self) {
-        self.window.swap_buffers()
-    }
-
-    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
-        self.window.get_proc_address(symbol)
+unsafe impl HasRawDisplayHandle for GlfwBackend {
+    fn raw_display_handle(&self) -> raw_window_handle::RawDisplayHandle {
+        self.window.raw_display_handle()
     }
 }
 
@@ -47,116 +40,56 @@ impl OpenGLWindowContext for GlfwBackend {
 ///
 #[derive(Default)]
 pub struct GlfwConfig {
-    /// This callback is called with `&mut Glfw` right after `Glfw` is created
+    /// This callback is called with `&mut Glfw` just before creating a window
     pub glfw_callback: Option<Box<dyn FnOnce(&mut Glfw)>>,
+    /// This will be called right after window creation. you can use this to do things at startup like
+    /// resizing, changing title, changing to fullscreen etc..
+    pub window_callback: Option<Box<dyn FnOnce(&mut glfw::Window)>>,
 }
 impl WindowBackend for GlfwBackend {
     type Configuration = GlfwConfig;
 
-    fn new(config: Self::Configuration, backend_settings: BackendSettings) -> Self {
+    type WindowType = glfw::Window;
+    fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
-        if let Some(glfw_callback) = config.glfw_callback {
-            glfw_callback(&mut glfw_context);
-        }
-        let mut swap_interval = None;
-        let mut opengl = false;
+
         // set hints based on gfx api config
-        match backend_settings.gfx_api_type.clone() {
-            GfxApiType::OpenGL { native_config } => {
-                opengl = true;
-                let NativeGlConfig {
-                    major,
-                    minor,
-                    es,
-                    core,
-                    depth_bits,
-                    stencil_bits,
-                    samples,
-                    srgb,
-                    double_buffer,
-                    vsync,
-                    debug,
-                } = native_config;
-                if let Some(major) = major {
-                    glfw_context.window_hint(WindowHint::ContextVersionMajor(major.into()));
-                }
-                if let Some(value) = minor {
-                    glfw_context.window_hint(WindowHint::ContextVersionMinor(value.into()));
-                }
-                if let Some(value) = es {
-                    glfw_context.window_hint(WindowHint::ClientApi(if value {
-                        ClientApiHint::OpenGlEs
-                    } else {
-                        ClientApiHint::OpenGl
-                    }));
-                }
-                if let Some(value) = core {
-                    glfw_context.window_hint(WindowHint::OpenGlProfile(if value {
-                        glfw::OpenGlProfileHint::Core
-                    } else {
-                        OpenGlProfileHint::Compat
-                    }));
-                }
-
-                glfw_context.window_hint(WindowHint::DepthBits(depth_bits.map(Into::into)));
-
-                glfw_context.window_hint(WindowHint::StencilBits(stencil_bits.map(Into::into)));
-
-                if let Some(srgb) = srgb {
-                    glfw_context.window_hint(WindowHint::SRgbCapable(srgb));
-                }
-                if let Some(samples) = samples {
-                    glfw_context.window_hint(WindowHint::Samples(Some(samples as u32)));
-                }
-                if let Some(value) = double_buffer {
-                    glfw_context.window_hint(WindowHint::DoubleBuffer(value.into()));
-                }
-                swap_interval = vsync;
-
-                if let Some(debug) = debug {
-                    glfw_context.window_hint(WindowHint::OpenGlDebugContext(debug));
-                }
+        match &backend_config.gfx_api_type {
+            GfxApiType::GL => {
+                glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::OpenGl));
             }
             GfxApiType::NoApi => {
                 glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
             }
-            GfxApiType::Vulkan => {
-                glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
-            }
+        }
+        if let Some(glfw_callback) = config.glfw_callback {
+            glfw_callback(&mut glfw_context);
         }
         // create a window
         let (mut window, events_receiver) = glfw_context
             .create_window(800, 600, "Overlay Window", glfw::WindowMode::Windowed)
             .expect("failed to create glfw window");
+        if let GfxApiType::GL = backend_config.gfx_api_type {
+            window.make_current();
+        }
         // set which events you care about
         window.set_all_polling(true);
         window.set_store_lock_key_mods(true);
-        if opengl {
-            window.make_current();
-
-            if let Some(value) = swap_interval {
-                glfw_context.set_swap_interval(if value {
-                    SwapInterval::Sync(1)
-                } else {
-                    SwapInterval::None
-                });
-            }
+        if let Some(window_callback) = config.window_callback {
+            window_callback(&mut window);
         }
         // collect details and keep them updated
         let (width, height) = window.get_framebuffer_size();
         let scale = window.get_content_scale();
         let cursor_position = window.get_cursor_pos();
-        let size_physical_pixels = [
-            width.try_into().expect("width not fit in u32"),
-            height.try_into().expect("height not fit in u32"),
-        ];
+        let size_physical_pixels = [width as u32, height as u32];
         let mut raw_input = RawInput::default();
         // set raw input screen rect details so that first frame
         // will have correct size even without any resize event
         raw_input.screen_rect = Some(egui::Rect::from_points(&[
             Default::default(),
-            [width as f32, height as f32].into(),
+            [width as f32 / scale.0, height as f32 / scale.0].into(),
         ]));
         raw_input.pixels_per_point = Some(scale.0);
         Self {
@@ -169,15 +102,25 @@ impl WindowBackend for GlfwBackend {
             raw_input,
             frame_events: vec![],
             resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
-            backend_settings,
+            backend_config,
+            cursor_icon: StandardCursor::Arrow,
         }
     }
 
     fn take_raw_input(&mut self) -> RawInput {
         self.raw_input.take()
     }
+    fn get_window(&mut self) -> Option<&mut Self::WindowType> {
+        Some(&mut self.window)
+    }
 
-    fn run_event_loop<G: GfxBackend<Self>, U: UserApp<Self, G>>(
+    fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]> {
+        let physical_fb_size = self.window.get_framebuffer_size();
+        self.size_physical_pixels = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
+        Some(self.size_physical_pixels)
+    }
+
+    fn run_event_loop<G: GfxBackend<Self>, U: UserAppData<Self, G>>(
         mut self,
         mut gfx_backend: G,
         mut user_app: U,
@@ -187,20 +130,21 @@ impl WindowBackend for GlfwBackend {
             // gather events
             self.tick();
             // take egui input
-            let input = self.take_raw_input();
+            let raw_input = self.take_raw_input();
             // take any frambuffer resize events
 
             // prepare surface for drawing
             gfx_backend.prepare_frame(self.resized_event_pending, &mut self);
             self.resized_event_pending = false;
-            // begin egui with input
-            egui_context.begin_frame(input);
             // run userapp gui function. let user do anything he wants with window or gfx backends
-            user_app.run(&egui_context, &mut self, &mut gfx_backend);
-            // end frame
-            let output = egui_context.end_frame();
+            let output = user_app.run(&egui_context, raw_input, &mut self, &mut gfx_backend);
+            if !output.platform_output.copied_text.is_empty() {
+                self.window
+                    .set_clipboard_string(&output.platform_output.copied_text);
+            }
+            self.set_cursor(output.platform_output.cursor_icon);
             // prepare egui render data for gfx backend
-            let gfx_output = EguiGfxOutput {
+            let egui_gfx_data = EguiGfxData {
                 meshes: egui_context.tessellate(output.shapes),
                 textures_delta: output.textures_delta,
                 screen_size_logical: [
@@ -209,21 +153,22 @@ impl WindowBackend for GlfwBackend {
                 ],
             };
             // render egui with gfx backend
-            gfx_backend.prepare_render(gfx_output);
-            gfx_backend.render();
+            gfx_backend.render(egui_gfx_data);
             // present the frame and loop back
             gfx_backend.present(&mut self);
         }
     }
 
-    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
-        let physical_fb_size = self.window.get_framebuffer_size();
-        self.size_physical_pixels = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
-        self.size_physical_pixels
+    fn get_config(&self) -> &BackendConfig {
+        &self.backend_config
     }
 
-    fn get_settings(&self) -> &BackendSettings {
-        &self.backend_settings
+    fn swap_buffers(&mut self) {
+        self.window.swap_buffers()
+    }
+
+    fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
+        self.window.get_proc_address(symbol)
     }
 }
 
@@ -231,26 +176,16 @@ impl GlfwBackend {
     pub fn tick(&mut self) {
         self.glfw.poll_events();
         self.frame_events.clear();
-        let cursor_position = self.window.get_cursor_pos();
-        let cursor_position = [cursor_position.0 as f32, cursor_position.1 as f32];
-        self.cursor_pos_physical_pixels = cursor_position;
-        // when we are passthorugh, we use this to get latest position
-        // if cursor_position != self.cursor_pos_physical_pixels {
-        //     self.cursor_pos_physical_pixels = cursor_position;
-        //     self.raw_input.events.push(Event::PointerMoved(
-        //         [
-        //             cursor_position[0] / self.scale[0],
-        //             cursor_position[1] / self.scale[1],
-        //         ]
-        //         .into(),
-        //     ))
-        // }
-
+        // whether we got a cursor event in this frame.
+        // if false, and the window is passthrough, we will manually get cursor pos and push it
+        // otherwise, we do nothing.
+        let mut cursor_event = false;
         for (_, event) in glfw::flush_messages(&self.events_receiver) {
+            self.frame_events.push(event.clone());
             // if let &glfw::WindowEvent::CursorPos(..) = &event {
             //     continue;
             // }
-            self.frame_events.push(event.clone());
+
             if let Some(ev) = match event {
                 glfw::WindowEvent::FramebufferSize(w, h) => {
                     self.size_physical_pixels = [w as u32, h as u32];
@@ -265,8 +200,8 @@ impl GlfwBackend {
                 glfw::WindowEvent::MouseButton(mb, a, m) => {
                     let emb = Event::PointerButton {
                         pos: Pos2 {
-                            x: cursor_position[0] / self.scale[0],
-                            y: cursor_position[1] / self.scale[1],
+                            x: self.cursor_pos_physical_pixels[0] / self.scale[0],
+                            y: self.cursor_pos_physical_pixels[1] / self.scale[1],
                         },
                         button: glfw_to_egui_pointer_button(mb),
                         pressed: glfw_to_egui_action(a),
@@ -334,12 +269,40 @@ impl GlfwBackend {
                     None
                 }
                 glfw::WindowEvent::CursorPos(x, y) => {
+                    cursor_event = true;
+                    self.cursor_pos_physical_pixels =
+                        [x as f32 * self.scale[0], y as f32 * self.scale[1]];
                     Some(egui::Event::PointerMoved([x as f32, y as f32].into()))
                 }
                 _rest => None,
             } {
                 self.raw_input.events.push(ev);
             }
+        }
+
+        let cursor_position = self.window.get_cursor_pos();
+        let cursor_position = [cursor_position.0 as f32, cursor_position.1 as f32];
+        // when there's no cursor event and cursor position has changed and window is passthrough
+        if !cursor_event
+            && cursor_position != self.cursor_pos_physical_pixels
+            && self.window.is_mouse_passthrough()
+        {
+            // we will manually push the cursor moved event.
+            self.raw_input.events.push(Event::PointerMoved(
+                [
+                    cursor_position[0] / self.scale[0],
+                    cursor_position[1] / self.scale[1],
+                ]
+                .into(),
+            ))
+        }
+        self.cursor_pos_physical_pixels = cursor_position;
+    }
+    fn set_cursor(&mut self, cursor: egui::CursorIcon) {
+        let cursor = egui_to_glfw_cursor(cursor);
+        if cursor != self.cursor_icon {
+            self.cursor_icon = cursor;
+            self.window.set_cursor(Some(glfw::Cursor::standard(cursor)));
         }
     }
 }
@@ -417,6 +380,8 @@ pub fn glfw_to_egui_pointer_button(mb: glfw::MouseButton) -> PointerButton {
         glfw::MouseButton::Button1 => PointerButton::Primary,
         glfw::MouseButton::Button2 => PointerButton::Secondary,
         glfw::MouseButton::Button3 => PointerButton::Middle,
+        glfw::MouseButton::Button4 => PointerButton::Extra1,
+        glfw::MouseButton::Button5 => PointerButton::Extra2,
         _ => PointerButton::Secondary,
     }
 }
@@ -426,5 +391,24 @@ pub fn glfw_to_egui_action(a: glfw::Action) -> bool {
         Action::Release => false,
         Action::Press => true,
         Action::Repeat => true,
+    }
+}
+/// This converts egui's cursor  icon into glfw's cursor which can be set by glfw.
+/// we can get some sample cursor images and use them in place of missing icons (like diagonal resizing cursor)
+pub fn egui_to_glfw_cursor(cursor: egui::CursorIcon) -> glfw::StandardCursor {
+    match cursor {
+        egui::CursorIcon::Default => StandardCursor::Arrow,
+        egui::CursorIcon::Crosshair => StandardCursor::Crosshair,
+        egui::CursorIcon::VerticalText | egui::CursorIcon::Text => StandardCursor::IBeam,
+        egui::CursorIcon::Grab | egui::CursorIcon::Grabbing => StandardCursor::Hand,
+        egui::CursorIcon::ResizeColumn
+        | egui::CursorIcon::ResizeWest
+        | egui::CursorIcon::ResizeEast
+        | egui::CursorIcon::ResizeHorizontal => StandardCursor::HResize,
+        egui::CursorIcon::ResizeRow
+        | egui::CursorIcon::ResizeNorth
+        | egui::CursorIcon::ResizeSouth
+        | egui::CursorIcon::ResizeVertical => StandardCursor::VResize,
+        _ => StandardCursor::Arrow,
     }
 }

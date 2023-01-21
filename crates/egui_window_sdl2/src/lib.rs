@@ -1,13 +1,9 @@
 use std::{path::PathBuf, str::FromStr};
 
-use crate::*;
 use egui::{Event, Key, Modifiers, PointerButton, RawInput};
-use raw_window_handle::RawWindowHandle;
-use sdl2::{
-    keyboard::Scancode,
-    video::{SwapInterval, Window},
-    Sdl,
-};
+use egui_backend::*;
+use egui_backend::{GfxApiType, WindowBackend};
+use sdl2::{keyboard::Scancode, video::Window, Sdl};
 
 pub struct Sdl2Backend {
     pub sdl_context: Sdl,
@@ -21,105 +17,40 @@ pub struct Sdl2Backend {
     pub gl_context: Option<sdl2::video::GLContext>,
     pub latest_resize_event: bool,
     pub should_close: bool,
-    pub backend_settings: BackendSettings,
+    pub backend_config: BackendConfig,
 }
 
 #[derive(Debug)]
-pub struct SDL2Settings {}
-impl Default for SDL2Settings {
+pub struct SDL2Config {}
+impl Default for SDL2Config {
     fn default() -> Self {
         Self {}
     }
 }
 impl WindowBackend for Sdl2Backend {
-    type Configuration = SDL2Settings;
+    type Configuration = SDL2Config;
 
-    fn new(_config: Self::Configuration, backend_settings: BackendSettings) -> Self
-    where
-        Self: Sized,
-    {
+    type WindowType = sdl2::video::Window;
+
+    fn new(_config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
-        let attrs = video_subsystem.gl_attr();
-        let mut swap_interval = None;
-        let mut opengl = false;
-        match backend_settings.gfx_api_type.clone() {
-            GfxApiType::OpenGL { native_config } => {
-                opengl = true;
-                let NativeGlConfig {
-                    major,
-                    minor,
-                    es,
-                    core,
-                    depth_bits,
-                    stencil_bits,
-                    samples,
-                    srgb,
-                    double_buffer,
-                    vsync,
-                    debug,
-                } = native_config;
-                swap_interval = vsync;
-                if let Some(value) = major {
-                    attrs.set_context_major_version(value);
-                }
-                if let Some(value) = minor {
-                    attrs.set_context_minor_version(value);
-                }
-                if let Some(value) = es {
-                    if value {
-                        attrs.set_context_profile(sdl2::video::GLProfile::GLES);
-                    }
-                }
-                if let Some(value) = core {
-                    if value {
-                        attrs.set_context_profile(sdl2::video::GLProfile::Core);
-                    } else {
-                        attrs.set_context_profile(sdl2::video::GLProfile::Compatibility);
-                    }
-                }
-                if let Some(value) = depth_bits {
-                    attrs.set_depth_size(value);
-                }
-                if let Some(value) = stencil_bits {
-                    attrs.set_stencil_size(value);
-                }
-                if let Some(value) = samples {
-                    attrs.set_multisample_samples(value);
-                }
-                if let Some(value) = srgb {
-                    attrs.set_framebuffer_srgb_compatible(value);
-                }
-                if let Some(value) = double_buffer {
-                    attrs.set_double_buffer(value);
-                }
-
-                if let Some(debug) = debug {
-                    if debug {
-                        attrs.set_context_flags().debug().set();
-                    }
-                }
-            }
-            GfxApiType::NoApi => {}
-            GfxApiType::Vulkan => {}
-        }
 
         let mut window_builder = video_subsystem.window("rust-sdl2 demo", 800, 600);
-        match backend_settings.gfx_api_type.clone() {
-            GfxApiType::OpenGL { .. } => {
+        match backend_config.gfx_api_type.clone() {
+            GfxApiType::GL => {
                 window_builder.opengl();
             }
-            GfxApiType::Vulkan => {
+            GfxApiType::NoApi => {
                 window_builder.vulkan();
             }
-            _ => {}
         }
         window_builder.allow_highdpi();
         window_builder.resizable();
         let window = window_builder.build().expect("failed to create a window");
         let event_pump = sdl_context.event_pump().expect("failed to get event pump");
         let mut gl_context = None;
-        if opengl {
+        if let GfxApiType::GL = backend_config.gfx_api_type {
             gl_context = Some(
                 window
                     .gl_create_context()
@@ -128,15 +59,6 @@ impl WindowBackend for Sdl2Backend {
             window
                 .gl_make_current(&gl_context.as_ref().unwrap())
                 .expect("failed to make gl context current");
-            if let Some(value) = swap_interval {
-                video_subsystem
-                    .gl_set_swap_interval(if value {
-                        SwapInterval::VSync
-                    } else {
-                        SwapInterval::Immediate
-                    })
-                    .expect("failed to set vsync option");
-            }
         }
         let mouse_state = event_pump.relative_mouse_state();
         let cursor_pos_physical_pixels = [mouse_state.x() as f32, mouse_state.y() as f32];
@@ -173,7 +95,7 @@ impl WindowBackend for Sdl2Backend {
             event_pump,
             should_close: false,
             gl_context,
-            backend_settings,
+            backend_config,
         }
     }
 
@@ -181,7 +103,18 @@ impl WindowBackend for Sdl2Backend {
         self.raw_input.take()
     }
 
-    fn run_event_loop<G: GfxBackend<Self>, U: UserApp<Self, G>>(
+    fn get_window(&mut self) -> Option<&mut Self::WindowType> {
+        Some(&mut self.window)
+    }
+
+    fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]> {
+        let size = self.window.drawable_size();
+
+        self.size_physical_pixels = [size.0, size.1];
+        Some(self.size_physical_pixels)
+    }
+
+    fn run_event_loop<G: GfxBackend<Self>, U: UserAppData<Self, G>>(
         mut self,
         mut gfx_backend: G,
         mut user_app: U,
@@ -191,18 +124,25 @@ impl WindowBackend for Sdl2Backend {
             // gather events
             self.tick();
             // take egui input
-            let input = self.take_raw_input();
+            let raw_input = self.take_raw_input();
             // prepare surface for drawing
             gfx_backend.prepare_frame(self.latest_resize_event, &mut self);
             self.latest_resize_event = false;
-            // begin egui with input
-            egui_context.begin_frame(input);
             // run userapp gui function. let user do anything he wants with window or gfx backends
-            user_app.run(&egui_context, &mut self, &mut gfx_backend);
-            // end frame
-            let output = egui_context.end_frame();
+
+            let output = user_app.run(&egui_context, raw_input, &mut self, &mut gfx_backend);
+            if !output.platform_output.copied_text.is_empty() {
+                if let Err(err) = self
+                    .window
+                    .subsystem()
+                    .clipboard()
+                    .set_clipboard_text(&output.platform_output.copied_text)
+                {
+                    tracing::error!("failed to set clipboard text due to error: {err}");
+                }
+            }
             // prepare egui render data for gfx backend
-            let gfx_output = EguiGfxOutput {
+            let egui_gfx_data = EguiGfxData {
                 meshes: egui_context.tessellate(output.shapes),
                 textures_delta: output.textures_delta,
                 screen_size_logical: [
@@ -211,25 +151,15 @@ impl WindowBackend for Sdl2Backend {
                 ],
             };
             // render egui with gfx backend
-            gfx_backend.prepare_render(gfx_output);
-            gfx_backend.render();
+            gfx_backend.render(egui_gfx_data);
             // present the frame and loop back
             gfx_backend.present(&mut self);
         }
     }
 
-    fn get_live_physical_size_framebuffer(&mut self) -> [u32; 2] {
-        let size = self.window.drawable_size();
-
-        self.size_physical_pixels = [size.0, size.1];
-        self.size_physical_pixels
+    fn get_config(&self) -> &BackendConfig {
+        &self.backend_config
     }
-
-    fn get_settings(&self) -> &BackendSettings {
-        &self.backend_settings
-    }
-}
-impl OpenGLWindowContext for Sdl2Backend {
     fn swap_buffers(&mut self) {
         self.window.gl_swap_window();
     }
@@ -238,11 +168,7 @@ impl OpenGLWindowContext for Sdl2Backend {
         self.window.subsystem().gl_get_proc_address(symbol) as *const core::ffi::c_void
     }
 }
-unsafe impl HasRawWindowHandle for Sdl2Backend {
-    fn raw_window_handle(&self) -> RawWindowHandle {
-        self.window.raw_window_handle()
-    }
-}
+
 impl Sdl2Backend {
     pub fn tick(&mut self) {
         self.frame_events.clear();
@@ -301,6 +227,7 @@ impl Sdl2Backend {
                         self.should_close = true;
                         None
                     }
+                    sdl2::event::WindowEvent::Leave => Some(Event::PointerGone),
                     _ => None,
                 },
                 sdl2::event::Event::KeyDown {
@@ -325,13 +252,15 @@ impl Sdl2Backend {
                         }
                         Scancode::V => {
                             if modifiers.ctrl {
-                                Some(Event::Text(
-                                    self.window
-                                        .subsystem()
-                                        .clipboard()
-                                        .clipboard_text()
-                                        .unwrap_or_default(),
-                                ))
+                                match self.window.subsystem().clipboard().clipboard_text() {
+                                    Ok(text) => Some(Event::Text(text)),
+                                    Err(err) => {
+                                        tracing::error!(
+                                            "failed to get clipboard text due to error: {err}"
+                                        );
+                                        None
+                                    }
+                                }
                             } else {
                                 None
                             }
@@ -438,7 +367,9 @@ impl Sdl2Backend {
                     });
                     None
                 }
-                _ => todo!(),
+                rest => unimplemented!(
+                    "sdl2 egui backend doesn't support this kinda event yet: {rest:#?}"
+                ),
             } {
                 self.raw_input.events.push(egui_event);
             }

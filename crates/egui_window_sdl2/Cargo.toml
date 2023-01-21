@@ -1,0 +1,12 @@
+[package]
+name = "egui_window_sdl2"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+egui_backend = { path = "../egui_backend" }
+raw-window-handle = { version = "0.5" }
+sdl2 = { version = "*", git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["raw-window-handle"]}
+tracing = {version = "*"}
