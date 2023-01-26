@@ -1,4 +1,5 @@
 use bytemuck::cast_slice;
+use std::borrow::Cow;
 use egui::{
     epaint::ImageDelta, util::IdTypeMap, ClippedPrimitive, Mesh, PaintCallback, PaintCallbackInfo,
     Rect, TextureId,
@@ -141,6 +142,10 @@ impl WgpuBackend {
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
+
+        let framebuffer_size = window_backend.get_live_physical_size_framebuffer().unwrap();
+        surface_config.width = framebuffer_size[0];
+        surface_config.height = framebuffer_size[1];
 
         debug!("device features: {:#?}", device.features());
         debug!("device limits: {:#?}", device.limits());
@@ -617,16 +622,26 @@ impl EguiPainter {
         textures_delta_set: Vec<(TextureId, ImageDelta)>,
     ) {
         for (tex_id, delta) in textures_delta_set {
-            let (pixels, size) = match delta.image {
-                egui::ImageData::Color(_) => todo!(),
+            let width = delta.image.width() as u32;
+            let height = delta.image.height() as u32;
+
+            let size = wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            };
+
+            let data_color32 = match &delta.image {
+                egui::ImageData::Color(color_image) => {
+                    Cow::Borrowed(&color_image.pixels)
+                },
                 egui::ImageData::Font(font_image) => {
-                    let pixels: Vec<u8> = font_image
-                        .srgba_pixels(Some(1.0))
-                        .flat_map(|c| c.to_array())
-                        .collect();
-                    (pixels, font_image.size)
+                    Cow::Owned(font_image.srgba_pixels(Some(1.0)).collect::<Vec<_>>())
                 }
             };
+
+            let data_bytes: &[u8] = bytemuck::cast_slice(data_color32.as_slice());
+
             match tex_id {
                 egui::TextureId::Managed(tex_id) => {
                     if let Some(_) = delta.pos {
@@ -638,11 +653,7 @@ impl EguiPainter {
                         };
                         let new_texture = dev.create_texture(&TextureDescriptor {
                             label: None,
-                            size: Extent3d {
-                                width: size[0] as u32,
-                                height: size[1] as u32,
-                                depth_or_array_layers: 1,
-                            },
+                            size,
                             mip_level_count,
                             sample_count: 1,
                             dimension: TextureDimension::D2,
@@ -657,23 +668,19 @@ impl EguiPainter {
                                 origin: Origin3d::default(),
                                 aspect: TextureAspect::All,
                             },
-                            &pixels,
+                            data_bytes,
                             ImageDataLayout {
                                 offset: 0,
                                 bytes_per_row: Some(
-                                    NonZeroU32::new(size[0] as u32 * 4)
+                                    NonZeroU32::new(size.width as u32 * 4)
                                         .expect("texture bytes per row is zero"),
                                 ),
                                 rows_per_image: Some(
-                                    NonZeroU32::new(size[1] as u32)
+                                    NonZeroU32::new(size.height as u32)
                                         .expect("texture rows count is zero"),
                                 ),
                             },
-                            Extent3d {
-                                width: size[0] as u32,
-                                height: size[1] as u32,
-                                depth_or_array_layers: 1,
-                            },
+                            size,
                         );
                         let view = new_texture.create_view(&TextureViewDescriptor {
                             label: None,
