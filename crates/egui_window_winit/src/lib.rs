@@ -74,7 +74,7 @@ impl WindowBackend for WinitBackend {
         let event_loop = event_loop.with_android_app(config.android_app);
 
         let el = event_loop.build();
-        tracing::error!("this is loggging");
+        tracing::info!("this is loggging");
 
         #[allow(unused_mut)]
         let mut window_builder = WindowBuilder::new()
@@ -104,7 +104,7 @@ impl WindowBackend for WinitBackend {
 
             Some(window)
         };
-        tracing::error!("this is not web");
+        tracing::info!("this is not web");
         #[cfg(all(not(target_os = "android"), not(target = "wasm32-unknown-unknown")))]
         let window = Some(
             window_builder
