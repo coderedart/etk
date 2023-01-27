@@ -649,11 +649,7 @@ impl EguiPainter {
                 egui::TextureId::Managed(tex_id) => {
                     if let Some(_) = delta.pos {
                     } else {
-                        let mip_level_count = if tex_id == 0 {
-                            1
-                        } else {
-                            panic!("get mip map count formula")
-                        };
+                        let mip_level_count = 1;
                         let new_texture = dev.create_texture(&TextureDescriptor {
                             label: None,
                             size,
