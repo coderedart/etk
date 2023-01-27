@@ -79,12 +79,7 @@ impl Default for WgpuConfig {
             device_descriptor: DeviceDescriptor {
                 label: Some("my wgpu device"),
                 features: Default::default(),
-                limits: wgpu::Limits {
-                    // When using a depth buffer, we have to be able to create a texture
-                    // large enough for the entire surface, and we want to support 4k+ displays.
-                    max_texture_dimension_2d: 8192,
-                    ..wgpu::Limits::downlevel_webgl2_defaults()
-                },
+                limits: Limits::downlevel_webgl2_defaults(),
             },
             surface_config: SurfaceConfiguration {
                 usage: TextureUsages::RENDER_ATTACHMENT,
@@ -654,7 +649,11 @@ impl EguiPainter {
                 egui::TextureId::Managed(tex_id) => {
                     if let Some(_) = delta.pos {
                     } else {
-                        let mip_level_count = 1;
+                        let mip_level_count = if tex_id == 0 {
+                            1
+                        } else {
+                            panic!("get mip map count formula")
+                        };
                         let new_texture = dev.create_texture(&TextureDescriptor {
                             label: None,
                             size,
