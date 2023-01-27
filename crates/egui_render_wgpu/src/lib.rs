@@ -628,7 +628,7 @@ impl EguiPainter {
             let width = delta.image.width() as u32;
             let height = delta.image.height() as u32;
 
-            let size = wgpu::Extent3d {
+            let size = Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
