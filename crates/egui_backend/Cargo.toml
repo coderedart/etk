@@ -47,7 +47,7 @@ egui = { version = "0.20", default-features = false }
 tracing = { version = "0.1" }
 intmap = { version = "2.0" }
 bytemuck = { version = "1.12" }
-# winit backend. 
+# winit backend.
 winit = { version = "0.27", optional = true }
 glow = { version = "0.11", optional = true }
 three-d = { version = "0.14", optional = true }

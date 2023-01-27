@@ -88,6 +88,9 @@ impl Default for WgpuConfig {
             },
             surface_config: SurfaceConfiguration {
                 usage: TextureUsages::RENDER_ATTACHMENT,
+                #[cfg(target_arch = "wasm32")]
+                format: TextureFormat::Rgba8UnormSrgb,
+                #[cfg(not(target_arch = "wasm32"))]
                 format: TextureFormat::Bgra8UnormSrgb,
                 width: 0,
                 height: 0,
@@ -117,7 +120,7 @@ impl WgpuBackend {
         debug!("using wgpu backends: {:?}", backends);
         let instance = Arc::new(Instance::new(backends));
         debug!("iterating over all adapters");
-        #[cfg(target = "wasm32-unknown-unknown")]
+        #[cfg(not(target_arch = "wasm32"))]
         for adapter in instance.enumerate_adapters(Backends::all()) {
             debug!("adapter: {:#?}", adapter.get_info());
         }

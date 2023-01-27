@@ -51,9 +51,9 @@ pub enum GfxApiType {
 
 impl Default for GfxApiType {
     fn default() -> Self {
-        #[cfg(target = "wasm32-unknown-unknown")]
+        #[cfg(target_arch = "wasm32")]
         return Self::GL;
-        #[cfg(not(target = "wasm32-unknown-unknown"))]
+        #[cfg(not(target_arch = "wasm32"))]
         return Self::NoApi;
     }
 }
@@ -179,7 +179,7 @@ pub trait GfxBackend<W: WindowBackend> {
 ///         egui::Window::new("New Window").show(egui_context, |ui| {
 ///             ui.label("hello label");
 ///         });
-///     }    
+///     }
 /// }
 /// ```
 ///
@@ -189,7 +189,7 @@ pub trait GfxBackend<W: WindowBackend> {
 /// impl UserApp<WinitBackend, WgpuBackend> for App {
 ///     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut WinitBackend, gfx_backend: &mut WgpuBackend) {
 ///         /* do something with winit or wgpu */
-///     }    
+///     }
 /// }
 /// ```
 ///

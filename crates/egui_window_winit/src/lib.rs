@@ -7,6 +7,12 @@ use winit::{
     event::{ModifiersState, VirtualKeyCode},
     event_loop::{ControlFlow, EventLoop},
 };
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
+#[cfg(target_arch = "wasm32")]
+use winit::platform::web::{WindowBuilderExtWebSys, WindowExtWebSys};
+
 /// config that you provide to winit backend
 #[derive(Debug)]
 pub struct WinitConfig {
@@ -16,7 +22,7 @@ pub struct WinitConfig {
     pub title: String,
     /// on web: winit will try to get the canvas element with this id attribute and use it as the window's context
     /// for now, it must not be empty. we can later provide options like creating a canvas ourselves and adding it to dom
-    /// defualt value is : `egui_canvas`
+    /// default value is : `egui_canvas`
     /// so, make sure there's a canvas element in html body with this id
     pub dom_element_id: Option<String>,
 }
@@ -68,6 +74,7 @@ impl WindowBackend for WinitBackend {
 
     fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let mut event_loop = winit::event_loop::EventLoopBuilder::with_user_event();
+
         #[cfg(target_os = "android")]
         use winit::platform::android::EventLoopBuilderExtAndroid;
         #[cfg(target_os = "android")]
@@ -80,15 +87,14 @@ impl WindowBackend for WinitBackend {
         let mut window_builder = WindowBuilder::new()
             .with_resizable(true)
             .with_title(&config.title);
-        #[cfg(target = "wasm32-unknown-unknown")]
+
+        #[cfg(target_arch = "wasm32")]
         let window = {
-            use wasm_bindgen::JsCast;
-            use winit::platform::web::{WindowBuilderExtWebSys, WindowExtWebSys};
             let document = web_sys::window()
                 .expect("failed ot get websys window")
                 .document()
                 .expect("failed to get websys doc");
-            tracing::error!("this is web loggging");
+            tracing::info!("this is web loggging");
             let canvas = config.dom_element_id.map(|canvas_id| {
                     document
                         .get_element_by_id(&canvas_id)
@@ -97,15 +103,16 @@ impl WindowBackend for WinitBackend {
                 });
             window_builder = window_builder.with_canvas(canvas);
             // create winit window
-            let window = winow_builder
+            let window = window_builder
                 .clone()
                 .build(&el)
                 .expect("failed to create winit window");
 
             Some(window)
         };
+
         tracing::info!("this is not web");
-        #[cfg(all(not(target_os = "android"), not(target = "wasm32-unknown-unknown")))]
+        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
         let window = Some(
             window_builder
                 .clone()
@@ -118,8 +125,8 @@ impl WindowBackend for WinitBackend {
 
         let framebuffer_size = [0, 0];
         let scale = 1.0;
-
         let raw_input = RawInput::default();
+
         Self {
             event_loop: Some(el),
             window: window,
