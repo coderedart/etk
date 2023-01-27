@@ -7,10 +7,12 @@ use egui_window_glfw_passthrough::GlfwBackend;
 
 fn main() {
     console_error_panic_hook::set_once();
-    // #[cfg(target = "wasm32-unknown-unknown")]
+    #[cfg(target_arch = "wasm32")]
     tracing_wasm::set_as_global_default();
+
     #[cfg(not(feature = "passthrough"))]
     let window_backend = WB::new(Default::default(), BackendConfig::default());
+
     #[cfg(feature = "passthrough")]
     let window_backend = GlfwBackend::new(
         egui_window_glfw_passthrough::GlfwConfig {
