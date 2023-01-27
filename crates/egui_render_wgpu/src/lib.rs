@@ -65,11 +65,11 @@ pub struct WgpuBackend {
 }
 
 pub struct WgpuConfig {
-    backends: Backends,
-    power_preference: PowerPreference,
-    device_descriptor: DeviceDescriptor<'static>,
-    surface_formats_priority: Vec<TextureFormat>,
-    surface_config: SurfaceConfiguration,
+    pub backends: Backends,
+    pub power_preference: PowerPreference,
+    pub device_descriptor: DeviceDescriptor<'static>,
+    pub surface_formats_priority: Vec<TextureFormat>,
+    pub surface_config: SurfaceConfiguration,
 }
 impl Default for WgpuConfig {
     fn default() -> Self {
