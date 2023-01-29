@@ -18,8 +18,8 @@ jobs:
           override: true
 
       - name: Install wasm32 targets
-        run: rustup add wasm32-unknown-unknown && rustup add wasm32-unknown-emscripten
-        
+        run: rustup target add wasm32-unknown-unknown && rustup target add wasm32-unknown-emscripten
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1
 
