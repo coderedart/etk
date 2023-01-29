@@ -15,14 +15,15 @@ pub struct GlfwBackend {
     pub glfw: glfw::Glfw,
     pub events_receiver: Receiver<(f64, WindowEvent)>,
     pub window: glfw::Window,
-    pub size_physical_pixels: [u32; 2],
+    pub framebuffer_size_physical: [u32; 2],
     pub scale: [f32; 2],
-    pub cursor_pos_physical_pixels: [f32; 2],
     pub raw_input: RawInput,
     pub cursor_icon: glfw::StandardCursor,
     pub frame_events: Vec<WindowEvent>,
     pub resized_event_pending: bool,
     pub backend_config: BackendConfig,
+    pub cursor_pos_physical_pixels: [f32; 2],
+    pub cursor_inside_bounds: bool,
 }
 
 unsafe impl HasRawWindowHandle for GlfwBackend {
@@ -96,7 +97,7 @@ impl WindowBackend for GlfwBackend {
             glfw: glfw_context,
             events_receiver,
             window,
-            size_physical_pixels,
+            framebuffer_size_physical: size_physical_pixels,
             scale: [scale.0, scale.1],
             cursor_pos_physical_pixels: [cursor_position.0 as f32, cursor_position.1 as f32],
             raw_input,
@@ -104,6 +105,7 @@ impl WindowBackend for GlfwBackend {
             resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
             backend_config,
             cursor_icon: StandardCursor::Arrow,
+            cursor_inside_bounds: false,
         }
     }
 
@@ -116,46 +118,36 @@ impl WindowBackend for GlfwBackend {
 
     fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]> {
         let physical_fb_size = self.window.get_framebuffer_size();
-        self.size_physical_pixels = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
-        Some(self.size_physical_pixels)
+        self.framebuffer_size_physical = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
+        Some(self.framebuffer_size_physical)
     }
 
-    fn run_event_loop<G: GfxBackend<Self>, U: UserAppData<Self, G>>(
-        mut self,
-        mut gfx_backend: G,
-        mut user_app: U,
-    ) {
-        let egui_context = egui::Context::default();
+    fn run_event_loop<U: EguiUserApp<Self>>(mut self, mut user_app: U) {
+        let mut wait_events_duration = std::time::Duration::ZERO;
         while !self.window.should_close() {
+            self.glfw
+                .wait_events_timeout(wait_events_duration.as_secs_f64());
             // gather events
             self.tick();
-            // take egui input
-            let raw_input = self.take_raw_input();
-            // take any frambuffer resize events
-
-            // prepare surface for drawing
-            gfx_backend.prepare_frame(self.resized_event_pending, &mut self);
-            self.resized_event_pending = false;
-            // run userapp gui function. let user do anything he wants with window or gfx backends
-            let output = user_app.run(&egui_context, raw_input, &mut self, &mut gfx_backend);
-            if !output.platform_output.copied_text.is_empty() {
-                self.window
-                    .set_clipboard_string(&output.platform_output.copied_text);
+            if self.resized_event_pending {
+                user_app.resize_framebuffer(&mut self);
+                self.resized_event_pending = false;
             }
-            self.set_cursor(output.platform_output.cursor_icon);
-            // prepare egui render data for gfx backend
-            let egui_gfx_data = EguiGfxData {
-                meshes: egui_context.tessellate(output.shapes),
-                textures_delta: output.textures_delta,
-                screen_size_logical: [
-                    self.size_physical_pixels[0] as f32 / self.scale[0],
-                    self.size_physical_pixels[1] as f32 / self.scale[0],
-                ],
-            };
-            // render egui with gfx backend
-            gfx_backend.render(egui_gfx_data);
-            // present the frame and loop back
-            gfx_backend.present(&mut self);
+            let logical_size = [
+                self.framebuffer_size_physical[0] as f32 / self.scale[0],
+                self.framebuffer_size_physical[1] as f32 / self.scale[1],
+            ];
+            // run userapp gui function. let user do anything he wants with window or gfx backends
+            if let Some((platform_output, timeout)) = user_app.run(logical_size, &mut self) {
+                wait_events_duration = timeout;
+                if !platform_output.copied_text.is_empty() {
+                    self.window
+                        .set_clipboard_string(&platform_output.copied_text);
+                }
+                self.set_cursor(platform_output.cursor_icon);
+            } else {
+                wait_events_duration = std::time::Duration::ZERO;
+            }
         }
     }
 
@@ -170,17 +162,20 @@ impl WindowBackend for GlfwBackend {
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
         self.window.get_proc_address(symbol)
     }
+
+    fn get_raw_input(&mut self) -> RawInput {
+        self.take_raw_input()
+    }
 }
 
 impl GlfwBackend {
     pub fn tick(&mut self) {
-        self.glfw.poll_events();
         self.frame_events.clear();
         // whether we got a cursor event in this frame.
         // if false, and the window is passthrough, we will manually get cursor pos and push it
         // otherwise, we do nothing.
         let mut cursor_event = false;
-        for (_, event) in glfw::flush_messages(&self.events_receiver) {
+        for (_timestamp, event) in glfw::flush_messages(&self.events_receiver) {
             self.frame_events.push(event.clone());
             // if let &glfw::WindowEvent::CursorPos(..) = &event {
             //     continue;
@@ -188,7 +183,7 @@ impl GlfwBackend {
 
             if let Some(ev) = match event {
                 glfw::WindowEvent::FramebufferSize(w, h) => {
-                    self.size_physical_pixels = [w as u32, h as u32];
+                    self.framebuffer_size_physical = [w as u32, h as u32];
                     self.resized_event_pending = true;
                     self.raw_input.screen_rect = Some(egui::Rect::from_two_pos(
                         Default::default(),
@@ -269,10 +264,24 @@ impl GlfwBackend {
                     None
                 }
                 glfw::WindowEvent::CursorPos(x, y) => {
+                    self.cursor_inside_bounds = true;
                     cursor_event = true;
                     self.cursor_pos_physical_pixels =
                         [x as f32 * self.scale[0], y as f32 * self.scale[1]];
                     Some(egui::Event::PointerMoved([x as f32, y as f32].into()))
+                }
+                WindowEvent::CursorEnter(c) => {
+                    self.cursor_inside_bounds = c;
+                    if c {
+                        None
+                    } else if !self.window.is_mouse_passthrough() {
+                        // if window is not passthrough, then we forward the event.
+                        Some(Event::PointerGone)
+                    } else {
+                        // if it is passthrough, then we will let the simulated event take care of this
+                        // because the pointer might still be within bounds even if we get cursor left event due to window losing focus due to passthrough
+                        None
+                    }
                 }
                 _rest => None,
             } {
@@ -282,19 +291,39 @@ impl GlfwBackend {
 
         let cursor_position = self.window.get_cursor_pos();
         let cursor_position = [cursor_position.0 as f32, cursor_position.1 as f32];
-        // when there's no cursor event and cursor position has changed and window is passthrough
-        if !cursor_event
-            && cursor_position != self.cursor_pos_physical_pixels
-            && self.window.is_mouse_passthrough()
-        {
-            // we will manually push the cursor moved event.
-            self.raw_input.events.push(Event::PointerMoved(
-                [
-                    cursor_position[0] / self.scale[0],
-                    cursor_position[1] / self.scale[1],
-                ]
-                .into(),
-            ))
+
+        // when there's no cursor event and window is passthrough, then, simulate mouse events
+        if !cursor_event && self.window.is_mouse_passthrough() {
+            let window_bounds = egui_backend::egui::Rect::from_two_pos(
+                Default::default(),
+                egui::pos2(
+                    self.framebuffer_size_physical[0] as f32,
+                    self.framebuffer_size_physical[1] as f32,
+                ),
+            );
+            // if cursor within window bounds
+            if window_bounds.contains(cursor_position.into()) {
+                // if cursor position has changed since last frame.
+                if cursor_position != self.cursor_pos_physical_pixels {
+                    // we will manually push the cursor moved event.
+                    self.raw_input.events.push(Event::PointerMoved(
+                        [
+                            cursor_position[0] / self.scale[0],
+                            cursor_position[1] / self.scale[1],
+                        ]
+                        .into(),
+                    ));
+                }
+                self.cursor_inside_bounds = true;
+            } else {
+                // if present cursor is out of bounds for the first time, we need to simulate a pointer gone event.
+                // we use the cursor inside bounds flag to keep track of whether the cursor was active
+                if self.cursor_inside_bounds {
+                    self.raw_input.events.push(Event::PointerGone);
+                    // will only be true if we set a new pointermoved event using window event loop or cursor coming into bounds again.
+                    self.cursor_inside_bounds = false;
+                }
+            }
         }
         self.cursor_pos_physical_pixels = cursor_position;
     }

@@ -1,4 +1,7 @@
-use egui_backend::{EguiGfxData, GfxBackend, WindowBackend};
+use egui_backend::{
+    egui::{ClippedPrimitive, TexturesDelta},
+    GfxBackend, WindowBackend,
+};
 use egui_render_glow::{GlowBackend, GlowConfig};
 pub use three_d;
 use three_d::Context;
@@ -12,10 +15,10 @@ pub struct ThreeDConfig {
     glow_config: GlowConfig,
 }
 
-impl<W: WindowBackend> GfxBackend<W> for ThreeDBackend {
+impl GfxBackend for ThreeDBackend {
     type Configuration = ThreeDConfig;
 
-    fn new(window_backend: &mut W, _config: Self::Configuration) -> Self {
+    fn new(window_backend: &mut impl WindowBackend, _config: Self::Configuration) -> Self {
         let glow_backend = GlowBackend::new(window_backend, _config.glow_config);
 
         #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
@@ -37,20 +40,29 @@ impl<W: WindowBackend> GfxBackend<W> for ThreeDBackend {
         }
     }
 
-    fn suspend(&mut self, _window_backend: &mut W) {}
+    fn suspend(&mut self, _window_backend: &mut impl WindowBackend) {}
 
-    fn resume(&mut self, _window_backend: &mut W) {}
+    fn resume(&mut self, _window_backend: &mut impl WindowBackend) {}
 
-    fn prepare_frame(&mut self, framebuffer_size_update: bool, window_backend: &mut W) {
+    fn prepare_frame(&mut self, window_backend: &mut impl WindowBackend) {
+        self.glow_backend.prepare_frame(window_backend);
+    }
+
+    fn render_egui(
+        &mut self,
+        meshes: Vec<ClippedPrimitive>,
+        textures_delta: TexturesDelta,
+        logical_screen_size: [f32; 2],
+    ) {
         self.glow_backend
-            .prepare_frame(framebuffer_size_update, window_backend);
+            .render_egui(meshes, textures_delta, logical_screen_size);
     }
 
-    fn render(&mut self, egui_gfx_data: EguiGfxData) {
-        <GlowBackend as GfxBackend<W>>::render(&mut self.glow_backend, egui_gfx_data);
-    }
-
-    fn present(&mut self, window_backend: &mut W) {
+    fn present(&mut self, window_backend: &mut impl WindowBackend) {
         self.glow_backend.present(window_backend);
+    }
+
+    fn resize_framebuffer(&mut self, window_backend: &mut impl WindowBackend) {
+        self.glow_backend.resize_framebuffer(window_backend);
     }
 }

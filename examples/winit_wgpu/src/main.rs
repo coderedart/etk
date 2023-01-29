@@ -1,12 +1,8 @@
 use egui_backend::{
-    egui::{self, RawInput, Window},
-    BackendConfig, GfxApiType, GfxBackend, UserAppData, WindowBackend,
+    egui::{self, Window},
+    BackendConfig, EguiUserApp, GfxApiType, GfxBackend, WindowBackend,
 };
-use egui_render_wgpu::{
-    wgpu,
-    wgpu::{Device, RenderPipeline, TextureFormat},
-    WgpuBackend,
-};
+use egui_render_wgpu::{wgpu, wgpu::RenderPipeline, WgpuBackend};
 use egui_window_winit::WinitBackend;
 use std::borrow::Cow;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
@@ -14,30 +10,53 @@ use tracing_subscriber::util::SubscriberInitExt;
 struct App {
     pipeline: RenderPipeline,
     frame_count: usize,
+    egui_context: egui::Context,
+    wgpu_backend: WgpuBackend,
 }
 
-impl UserAppData<WinitBackend, WgpuBackend> for App {
-    fn run(
-        &mut self,
-        egui_context: &egui::Context,
-        raw_input: RawInput,
-        _window_backend: &mut WinitBackend,
-        gfx_backend: &mut WgpuBackend,
-    ) -> egui::FullOutput {
-        egui_context.begin_frame(raw_input);
+impl EguiUserApp<WinitBackend> for App {
+    fn gui_run(&mut self, egui_context: &egui::Context, window_backend: &mut WinitBackend) {
+        for ev in window_backend.frame_events.iter() {
+            match ev {
+                egui_window_winit::winit::event::Event::WindowEvent { event, .. } => match event {
+                    egui_window_winit::winit::event::WindowEvent::Resized(s) => {
+                        println!("resized to {s:?}")
+                    }
+                    egui_window_winit::winit::event::WindowEvent::Moved(l) => {
+                        println!("moved to {l:?}")
+                    }
+                    egui_window_winit::winit::event::WindowEvent::ScaleFactorChanged {
+                        scale_factor,
+                        new_inner_size: _,
+                    } => println!("scale: {scale_factor}"),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
         // draw a triangle
-        self.draw_triangle(gfx_backend);
+        self.draw_triangle();
         Window::new("egui user window").show(egui_context, |ui| {
             ui.label("hello");
             ui.label(format!("frame number: {}", self.frame_count));
             ui.label(format!("{:#?}", egui_context.pointer_latest_pos()));
             self.frame_count += 1;
         });
-        egui_context.end_frame()
+    }
+
+    type UserGfxBackend = WgpuBackend;
+
+    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend {
+        &mut self.wgpu_backend
+    }
+
+    fn get_egui_context(&mut self) -> egui::Context {
+        self.egui_context.clone()
     }
 }
 impl App {
-    pub fn new(device: &Device, surface_format: TextureFormat) -> Self {
+    pub fn new(wgpu_backend: WgpuBackend) -> Self {
+        let device = wgpu_backend.device.clone();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(TRIANGLE_SHADER_SRC)),
@@ -60,7 +79,9 @@ impl App {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                targets: &[Some(surface_format.into())],
+                targets: &[Some(
+                    wgpu_backend.surface_manager.surface_config.format.into(),
+                )],
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
@@ -70,18 +91,26 @@ impl App {
         Self {
             pipeline: render_pipeline,
             frame_count: 0,
+            egui_context: Default::default(),
+            wgpu_backend,
         }
     }
 
-    fn draw_triangle(&self, gfx_backend: &mut WgpuBackend) {
-        let mut encoder = gfx_backend
+    fn draw_triangle(&mut self) {
+        let mut encoder = self
+            .wgpu_backend
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: gfx_backend.surface_view.as_ref().unwrap(),
+                    view: self
+                        .wgpu_backend
+                        .surface_manager
+                        .surface_view
+                        .as_ref()
+                        .unwrap(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
@@ -93,7 +122,7 @@ impl App {
             rpass.set_pipeline(&self.pipeline);
             rpass.draw(0..3, 0..1);
         }
-        gfx_backend.command_encoders.push(encoder);
+        self.wgpu_backend.command_encoders.push(encoder);
     }
 }
 const TRIANGLE_SHADER_SRC: &str = r#"@vertex
@@ -121,8 +150,8 @@ pub fn fake_main() {
     );
 
     let wgpu_backend = WgpuBackend::new(&mut window_backend, Default::default());
-    let app = App::new(&wgpu_backend.device, wgpu_backend.surface_config.format);
-    window_backend.run_event_loop(wgpu_backend, app);
+    let app = App::new(wgpu_backend);
+    window_backend.run_event_loop(app);
 }
 
 fn main() {

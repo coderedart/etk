@@ -22,10 +22,12 @@
 //!
 //! reminder: https://developer.chrome.com/en/docs/web-platform/webgpu/ origin trials of webgpu in chrome ends on 1st Feb, 2023.
 
+use std::time::Duration;
+
 pub use egui;
 pub use raw_window_handle;
 
-use egui::{ClippedPrimitive, RawInput, TexturesDelta};
+use egui::{ClippedPrimitive, FullOutput, PlatformOutput, RawInput, TexturesDelta};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 /// Intended to provide a common struct which all window backends accept as their configuration.
@@ -51,25 +53,11 @@ pub enum GfxApiType {
 
 impl Default for GfxApiType {
     fn default() -> Self {
-        #[cfg(target = "wasm32-unknown-unknown")]
+        #[cfg(target_arch = "wasm32")]
         return Self::GL;
-        #[cfg(not(target = "wasm32-unknown-unknown"))]
+        #[cfg(not(target_arch = "wasm32"))]
         return Self::NoApi;
     }
-}
-
-/// This is the output from egui that renderer needs.
-/// meshes and textures_delta come from egui directly.
-/// window backend needs to also provide screensize in logical coords, scale and physical framebuffer
-/// size in pixels.
-pub struct EguiGfxData {
-    /// from output of `Context::end_frame()`
-    pub meshes: Vec<ClippedPrimitive>,
-    /// from output of `Context::end_frame()`
-    pub textures_delta: TexturesDelta,
-    /// this is what you provided to `RawInput` for `Context::begin_frame()`
-    /// * used for screen_size uniform in shaders
-    pub screen_size_logical: [f32; 2],
 }
 
 /// Implement this trait for your windowing backend. the main responsibility of a
@@ -93,19 +81,15 @@ pub trait WindowBackend: Sized {
     /// if this is None, it means window hasn't been created, or has been destroyed for some reason.
     /// usually on android, this means the app is suspended.
     fn get_window(&mut self) -> Option<&mut Self::WindowType>;
-    /// sometimes, the frame buffer size might have changed and the event is still not received.
+    /// sometimes, the frame buffer size might have changed and the resize event is still not received.
     /// in those cases, wgpu / vulkan like render apis will throw an error if you try to acquire swapchain
     /// image with an outdated size. you will need to provide the *latest* size for succesful creation of surface frame.
     /// if the return value is `None`, the window doesn't exist yet. eg: on android, after suspend but before resume event.
     fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]>;
-
+    fn get_raw_input(&mut self) -> RawInput;
     /// Run the event loop. different backends run it differently, so they all need to take care and
     /// call the Gfx or UserApp functions at the right time.
-    fn run_event_loop<G: GfxBackend<Self> + 'static, U: UserAppData<Self, G> + 'static>(
-        self,
-        gfx_backend: G,
-        user_app: U,
-    );
+    fn run_event_loop<U: EguiUserApp<Self> + 'static>(self, user_app: U);
     /// config if GfxBackend needs them. usually tells the GfxBackend whether we have an opengl or non-opengl window.
     /// for example, if a vulkan backend gets a window with opengl, it can gracefully panic instead of probably segfaulting.
     /// this also serves as an indicator for opengl gfx backends, on whether this backend supports `swap_buffers` or `get_proc_address` functions.
@@ -133,7 +117,7 @@ pub trait WindowBackend: Sized {
 ///
 /// for example, an sdl2_gfx renderer might only want to work with a specific sdl2 window backend. and
 /// another person might want to make a different sdl2 renderer, and can reuse the old sdl2 window backend.
-pub trait GfxBackend<W: WindowBackend> {
+pub trait GfxBackend {
     /// similar to WindowBakendConfig. just make them as complicated or as simple as you want.
     type Configuration: Default;
 
@@ -143,30 +127,36 @@ pub trait GfxBackend<W: WindowBackend> {
     ///
     /// for example, a glow renderer might want an opengl context. but if the window was created without one,
     /// the glow renderer should panic.
-    fn new(window_backend: &mut W, config: Self::Configuration) -> Self;
+    fn new(window_backend: &mut impl WindowBackend, config: Self::Configuration) -> Self;
 
     /// Android only. callend on app suspension, which destroys the window.
     /// so, will need to destroy the `Surface` and recreate during resume event.
-    fn suspend(&mut self, _window_backend: &mut W) {
+    fn suspend(&mut self, _window_backend: &mut impl WindowBackend) {
         unimplemented!("This window backend doesn't implement suspend event");
     }
     /// Android Only. called when app is resumed after suspension.
     /// On Android, window can only be created on resume event. so, you cannot create a `Surface` before entering the event loop.
-    /// We can now create a new surface (swapchain) for the window.
-    /// on other platforms, it **may** be called once at startup after entering eventloop, but we can ignore it.
-    fn resume(&mut self, _window_backend: &mut W) {}
+    /// when this fn is called, we can create a new surface (swapchain) for the window.
+    /// doesn't apply on other platforms.
+    fn resume(&mut self, _window_backend: &mut impl WindowBackend) {}
     /// prepare the surface / swapchain etc.. by acquiring an image for the current frame.
-    /// `framebuffer_needs_resize` indicates a window resize.
-    /// use `WindowBackend::get_live_physical_size_framebuffer` fn to resize your swapchain.
-    fn prepare_frame(&mut self, framebuffer_needs_resize: bool, window_backend: &mut W);
+    /// use `WindowBackend::get_live_physical_size_framebuffer` fn to resize your swapchain if it is out of date.
+    fn prepare_frame(&mut self, window_backend: &mut impl WindowBackend);
 
     /// This is where the renderers will start creating renderpasses, issue draw calls etc.. using the data previously prepared.
-    fn render(&mut self, egui_gfx_data: EguiGfxData);
+    fn render_egui(
+        &mut self,
+        meshes: Vec<ClippedPrimitive>,
+        textures_delta: TexturesDelta,
+        logical_screen_size: [f32; 2],
+    );
 
     /// This is called at the end of the frame. after everything is drawn, you can now present
-    /// on opengl, you might call `WindowBackend::swap_buffers`.
-    /// on wgpu / vulkan, you might submit commands to queues, present swapchain image etc..
-    fn present(&mut self, window_backend: &mut W);
+    /// on opengl, renderer might call `WindowBackend::swap_buffers`.
+    /// on wgpu / vulkan, renderer might submit commands to queues, present swapchain image etc..
+    fn present(&mut self, window_backend: &mut impl WindowBackend);
+    /// called if framebuffer has been resized. use this to reconfigure your swapchain/surface/viewport..
+    fn resize_framebuffer(&mut self, window_backend: &mut impl WindowBackend);
 }
 
 /// This is the trait most users care about. just implement this trait and you can use any `WindowBackend` or `GfxBackend` to run your egui app.
@@ -174,11 +164,30 @@ pub trait GfxBackend<W: WindowBackend> {
 /// if you don't particular care about the window or gfx backends used to run your app, you can just use a generic impl
 /// ```rust
 /// pub struct App;
-/// impl<W: WindowBackend, G: GfxBackend<W>> UserApp<W, G> for App {
-///     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut W, gfx_backend: &mut G) {
-///         egui::Window::new("New Window").show(egui_context, |ui| {
-///             ui.label("hello label");
+/// impl<WB: WindowBackend, GB: GfxBackend> UserApp<WB, GB> for App {
+///     fn run(&mut self, egui_context: &egui::Context, raw_input: egui::RawInput, window_backend: &mut impl WB, gfx_backend: &mut GB, logical_size: [f32; 2]) {
+///         egui_context.begin_frame(raw_input); // use input to begin frame and then run your gui code
+///         Window::new("egui user window").show(egui_context, |ui| {
+///                ui.label("hello");
 ///         });
+///         // take egui full output after ending frame
+///         let egui::FullOutput {
+///             platform_output,
+///             repaint_after,
+///             textures_delta,
+///             shapes,
+///         } = egui_context.end_frame();
+///         // send egui data to renderer.
+///         gfx_backend.render(EguiGfxData {
+///             meshes: egui_context.tessellate(shapes),
+///             textures_delta,
+///             screen_size_logical,
+///         });
+///         // present the rendered surface.
+///         gfx_backend.present(window_backend);
+///         // return the platform output (window backend will set the cursor etc.. using this)
+///         // and repaint_after which is the max duration we will wait for events before calling this function again.
+///         (platform_output, repaint_after)
 ///     }    
 /// }
 /// ```
@@ -187,35 +196,130 @@ pub trait GfxBackend<W: WindowBackend> {
 /// ```rust
 /// pub struct App;
 /// impl UserApp<WinitBackend, WgpuBackend> for App {
-///     fn run(&mut self, egui_context: &egui::Context, window_backend: &mut WinitBackend, gfx_backend: &mut WgpuBackend) {
+///     fn run(&mut self, egui_context: &egui::Context, raw_input: egui::RawInput, window_backend: &mut WinitBackend, gfx_backend: &mut impl WgpuBackend, logical_size: [f32; 2]) {
 ///         /* do something with winit or wgpu */
 ///     }    
 /// }
 /// ```
-///
-/// we might add more functions to this trait in future which will be called between specific functions.
-/// like `pre_render` which will be called after `GfxBackend::pre_render` but before `GfxBackend::render`.
-/// or `post_render` which will be called after `GfxBackend::render` but before `GfxBackend::present` etc..
-///
-/// it will all depend on the demands of users and backend implementors who might need more flexibility
-pub trait UserAppData<W: WindowBackend, G: GfxBackend<W>> {
-    /// This function is provided a
-    /// 1. mutable reference to the data/struct which this is implemented for
-    /// 2. egui context.
-    /// 3. raw_input. use the raw input to start a frame in egui context and draw your gui stuff
-    /// 4. window backend. in case you want something like window size or whatever
-    /// 5. gfx backend. this is what you use to draw stuff or fill up some data buffers/textures before using them during rendering callbacks etc..
-    ///
-    /// and this function returns the egui fulloutput which you will get by ending the frame in egui context.
-    ///
-    /// you can use the rawinput to get events like cursor movement, button presses/releases, keyboard key press/releases, window resize events etc.
-    /// and you can filter them out too. like only restricting egui to left half of your window by modifying the resize event before starting egui context.
-    /// you can also use the fulloutput to add accesskit or other useful features without support from windowing/gfx backends.
+pub trait EguiUserApp<WB: WindowBackend> {
+    type UserGfxBackend: GfxBackend;
+
+    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend;
+    fn get_egui_context(&mut self) -> egui::Context;
+    fn resize_framebuffer(&mut self, window_backend: &mut WB) {
+        self.get_gfx_backend().resize_framebuffer(window_backend);
+    }
+    fn resume(&mut self, window_backend: &mut WB) {
+        self.get_gfx_backend().resume(window_backend);
+    }
+    fn suspend(&mut self, window_backend: &mut WB) {
+        self.get_gfx_backend().suspend(window_backend);
+    }
     fn run(
         &mut self,
-        egui_context: &egui::Context,
-        raw_input: egui::RawInput,
-        window_backend: &mut W,
-        gfx_backend: &mut G,
-    ) -> egui::FullOutput;
+        logical_size: [f32; 2],
+        window_backend: &mut WB,
+    ) -> Option<(PlatformOutput, Duration)> {
+        // don't bother doing anything if there's no window
+        if window_backend.get_window().is_some() {
+            let egui_context = self.get_egui_context();
+            let input = window_backend.get_raw_input();
+            self.get_gfx_backend().prepare_frame(window_backend);
+            egui_context.begin_frame(input);
+            self.gui_run(&egui_context, window_backend);
+            let FullOutput {
+                platform_output,
+                repaint_after,
+                textures_delta,
+                shapes,
+            } = egui_context.end_frame();
+            self.get_gfx_backend().render_egui(
+                egui_context.tessellate(shapes),
+                textures_delta,
+                logical_size,
+            );
+            self.get_gfx_backend().present(window_backend);
+            return Some((platform_output, repaint_after));
+        }
+        return None;
+    }
+    /// This is the only function user needs to implement. this function will be called every frame.
+    /// user MUST
+    /// 1. use raw input for egui context's begin frame.
+    /// 2. call gfx backend's render -> present methods in that order.
+    /// 3. return platform output and repaint_after data from the full output struct.
+    ///
+    /// example:
+    /// ```rust
+    /// egui_context.begin_frame(raw_input); // use input to begin frame and then run your gui code
+    /// Window::new("egui user window").show(egui_context, |ui| {
+    ///        ui.label("hello");
+    /// });
+    /// // take egui full output after ending frame
+    /// let egui::FullOutput {
+    ///     platform_output,
+    ///     repaint_after,
+    ///     textures_delta,
+    ///     shapes,
+    /// } = egui_context.end_frame();
+    /// // send egui data to renderer.
+    /// gfx_backend.render(EguiGfxData {
+    ///     meshes: egui_context.tessellate(shapes),
+    ///     textures_delta,
+    ///     screen_size_logical,
+    /// });
+    /// // present the rendered surface.
+    /// gfx_backend.present(window_backend);
+    /// // return the platform output (window backend will set the cursor etc.. using this)
+    /// // and repaint_after which is the max duration we will wait for events before calling this function again.
+    /// (platform_output, repaint_after)
+    /// ```
+    /// you can use the rawinput to get events like cursor movement, button presses/releases, keyboard key press/releases, window resize events etc.
+    /// and you can filter them out too. like only restricting egui to left half of your window by modifying the resize event before starting egui context.
+    /// you can use the fulloutput to add accesskit or other useful features.
+    /// you can modify platform output for a particular cursor or opening a url etc.. before returning them
+    fn gui_run(&mut self, egui_context: &egui::Context, window_backend: &mut WB);
+}
+
+/// Some nice util functions commonly used by egui backends.
+pub mod util {
+    /// input: clip rectangle, scale and framebuffer size in physical pixels
+    /// we will get [x, y, width, height] of the scissor rectangle.
+    ///
+    /// internally, it will
+    /// 1. multiply clip rect and scale  to convert the logical rectangle to a physical rectangle in framebuffer space.
+    /// 2. clamp the rectangle between 0..width and 0..height of the frambuffer.
+    /// 3. round the rectangle into the nearest u32 (within the above frambuffer bounds ofc)
+    /// 4. return Some only if width/height of scissor region are not zero.
+    pub fn scissor_from_clip_rect(
+        clip_rect: &egui::Rect,
+        scale: f32,
+        physical_framebuffer_size: [u32; 2],
+    ) -> Option<[u32; 4]> {
+        // copy paste from official egui impl because i have no idea what this is :D
+        let clip_min_x = scale * clip_rect.min.x;
+        let clip_min_y = scale * clip_rect.min.y;
+        let clip_max_x = scale * clip_rect.max.x;
+        let clip_max_y = scale * clip_rect.max.y;
+        let clip_min_x = clip_min_x.clamp(0.0, physical_framebuffer_size[0] as f32);
+        let clip_min_y = clip_min_y.clamp(0.0, physical_framebuffer_size[1] as f32);
+        let clip_max_x = clip_max_x.clamp(clip_min_x, physical_framebuffer_size[0] as f32);
+        let clip_max_y = clip_max_y.clamp(clip_min_y, physical_framebuffer_size[1] as f32);
+
+        let clip_min_x = clip_min_x.round() as u32;
+        let clip_min_y = clip_min_y.round() as u32;
+        let clip_max_x = clip_max_x.round() as u32;
+        let clip_max_y = clip_max_y.round() as u32;
+
+        let width = (clip_max_x - clip_min_x).max(1);
+        let height = (clip_max_y - clip_min_y).max(1);
+
+        // Clip scissor rectangle to target size.
+        let clip_x = clip_min_x.min(physical_framebuffer_size[0]);
+        let clip_y = clip_min_y.min(physical_framebuffer_size[1]);
+        let clip_width = width.min(physical_framebuffer_size[0] - clip_x);
+        let clip_height = height.min(physical_framebuffer_size[1] - clip_y);
+        // return none if scissor width/height are zero
+        (clip_height != 0 && clip_width != 0).then_some([clip_x, clip_y, clip_width, clip_height])
+    }
 }

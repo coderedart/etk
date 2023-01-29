@@ -114,46 +114,36 @@ impl WindowBackend for Sdl2Backend {
         Some(self.size_physical_pixels)
     }
 
-    fn run_event_loop<G: GfxBackend<Self>, U: UserAppData<Self, G>>(
-        mut self,
-        mut gfx_backend: G,
-        mut user_app: U,
-    ) {
-        let egui_context = egui::Context::default();
+    fn run_event_loop<U: EguiUserApp<Self>>(mut self, mut user_app: U) {
+        let mut events_wait_duration = std::time::Duration::ZERO;
         while !self.should_close {
             // gather events
-            self.tick();
-            // take egui input
-            let raw_input = self.take_raw_input();
+            self.tick(events_wait_duration);
             // prepare surface for drawing
-            gfx_backend.prepare_frame(self.latest_resize_event, &mut self);
-            self.latest_resize_event = false;
-            // run userapp gui function. let user do anything he wants with window or gfx backends
-
-            let output = user_app.run(&egui_context, raw_input, &mut self, &mut gfx_backend);
-            if !output.platform_output.copied_text.is_empty() {
-                if let Err(err) = self
-                    .window
-                    .subsystem()
-                    .clipboard()
-                    .set_clipboard_text(&output.platform_output.copied_text)
-                {
-                    tracing::error!("failed to set clipboard text due to error: {err}");
-                }
+            if self.latest_resize_event {
+                user_app.resize_framebuffer(&mut self);
+                self.latest_resize_event = false;
             }
-            // prepare egui render data for gfx backend
-            let egui_gfx_data = EguiGfxData {
-                meshes: egui_context.tessellate(output.shapes),
-                textures_delta: output.textures_delta,
-                screen_size_logical: [
-                    self.size_physical_pixels[0] as f32 / self.scale[0],
-                    self.size_physical_pixels[1] as f32 / self.scale[0],
-                ],
-            };
-            // render egui with gfx backend
-            gfx_backend.render(egui_gfx_data);
-            // present the frame and loop back
-            gfx_backend.present(&mut self);
+            // run userapp gui function. let user do anything he wants with window or gfx backends
+            let logical_size = [
+                self.size_physical_pixels[0] as f32 / self.scale[0],
+                self.size_physical_pixels[1] as f32 / self.scale[1],
+            ];
+            if let Some((platform_output, timeout)) = user_app.run(logical_size, &mut self) {
+                events_wait_duration = timeout;
+                if !platform_output.copied_text.is_empty() {
+                    if let Err(err) = self
+                        .window
+                        .subsystem()
+                        .clipboard()
+                        .set_clipboard_text(&platform_output.copied_text)
+                    {
+                        tracing::error!("failed to set clipboard text due to error: {err}");
+                    }
+                }
+            } else {
+                events_wait_duration = std::time::Duration::ZERO
+            }
         }
     }
 
@@ -167,10 +157,14 @@ impl WindowBackend for Sdl2Backend {
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
         self.window.subsystem().gl_get_proc_address(symbol) as *const core::ffi::c_void
     }
+
+    fn get_raw_input(&mut self) -> RawInput {
+        self.take_raw_input()
+    }
 }
 
 impl Sdl2Backend {
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, events_wait_duration: std::time::Duration) {
         self.frame_events.clear();
         let mut modifiers = Modifiers::default();
         for pressed in self.event_pump.keyboard_state().pressed_scancodes() {
@@ -202,177 +196,222 @@ impl Sdl2Backend {
                 _ => {}
             }
         }
+        // first wait for the event or until time out.
+        if let Some(event) = self
+            .event_pump
+            .wait_event_timeout(events_wait_duration.as_millis() as u32)
+        {
+            for pressed in self.event_pump.keyboard_state().pressed_scancodes() {
+                match pressed {
+                    sdl2::keyboard::Scancode::LCtrl => {
+                        modifiers.ctrl = true;
+                    }
+                    sdl2::keyboard::Scancode::LShift => {
+                        modifiers.shift = true;
+                    }
+                    sdl2::keyboard::Scancode::LAlt => {
+                        modifiers.alt = true;
+                    }
+                    sdl2::keyboard::Scancode::LGui => {
+                        modifiers.command = true;
+                    }
+                    sdl2::keyboard::Scancode::RCtrl => {
+                        modifiers.ctrl = true;
+                    }
+                    sdl2::keyboard::Scancode::RShift => {
+                        modifiers.shift = true;
+                    }
+                    sdl2::keyboard::Scancode::RAlt => {
+                        modifiers.alt = true;
+                    }
+                    sdl2::keyboard::Scancode::RGui => {
+                        modifiers.command = true;
+                    }
+                    _ => {}
+                }
+            }
+            self.on_event(modifiers, event);
+        }
+        // after the timeout or an event before timeout, drain the rest of the events from pump
+        let mut events = vec![]; // use vec to avoid borrow checker error
         for event in self.event_pump.poll_iter() {
-            self.frame_events.push(event.clone());
-            if let Some(egui_event) = match event {
-                sdl2::event::Event::Quit { .. } => {
+            events.push(event);
+        }
+        for event in events {
+            self.on_event(modifiers, event);
+        }
+    }
+
+    fn on_event(&mut self, modifiers: Modifiers, event: sdl2::event::Event) {
+        self.frame_events.push(event.clone());
+        if let Some(egui_event) = match event {
+            sdl2::event::Event::Quit { .. } => {
+                self.should_close = true;
+                None
+            }
+            sdl2::event::Event::Window { win_event, .. } => match win_event {
+                sdl2::event::WindowEvent::SizeChanged(w, h) => {
+                    // assume w and h are in logical units because the docs are -_-
+                    self.raw_input.screen_rect = Some(egui::Rect::from_two_pos(
+                        Default::default(),
+                        [w as f32, h as f32].into(),
+                    ));
+                    // physical width and height for framebuffer resize.
+                    let (pw, ph) = self.window.drawable_size();
+                    self.size_physical_pixels = [pw, ph];
+                    self.latest_resize_event = true;
+
+                    None
+                }
+                sdl2::event::WindowEvent::Close => {
                     self.should_close = true;
                     None
                 }
-                sdl2::event::Event::Window { win_event, .. } => match win_event {
-                    sdl2::event::WindowEvent::SizeChanged(w, h) => {
-                        // assume w and h are in logical units because the docs are -_-
-                        self.raw_input.screen_rect = Some(egui::Rect::from_two_pos(
-                            Default::default(),
-                            [w as f32, h as f32].into(),
-                        ));
-                        // physical width and height for framebuffer resize.
-                        let (pw, ph) = self.window.drawable_size();
-                        self.size_physical_pixels = [pw, ph];
-                        self.latest_resize_event = true;
-
-                        None
-                    }
-                    sdl2::event::WindowEvent::Close => {
-                        self.should_close = true;
-                        None
-                    }
-                    sdl2::event::WindowEvent::Leave => Some(Event::PointerGone),
-                    _ => None,
-                },
-                sdl2::event::Event::KeyDown {
-                    scancode, keymod, ..
-                } => {
-                    let scan_code = scancode.expect("scan code empty");
-                    let modifiers = sdl_to_egui_modifiers(keymod);
-                    match scan_code {
-                        Scancode::C => {
-                            if modifiers.ctrl {
-                                Some(Event::Copy)
-                            } else {
-                                None
-                            }
+                sdl2::event::WindowEvent::Leave => Some(Event::PointerGone),
+                _ => None,
+            },
+            sdl2::event::Event::KeyDown {
+                scancode, keymod, ..
+            } => {
+                let scan_code = scancode.expect("scan code empty");
+                let modifiers = sdl_to_egui_modifiers(keymod);
+                match scan_code {
+                    Scancode::C => {
+                        if modifiers.ctrl {
+                            Some(Event::Copy)
+                        } else {
+                            None
                         }
-                        Scancode::X => {
-                            if modifiers.ctrl {
-                                Some(Event::Cut)
-                            } else {
-                                None
-                            }
+                    }
+                    Scancode::X => {
+                        if modifiers.ctrl {
+                            Some(Event::Cut)
+                        } else {
+                            None
                         }
-                        Scancode::V => {
-                            if modifiers.ctrl {
-                                match self.window.subsystem().clipboard().clipboard_text() {
-                                    Ok(text) => Some(Event::Text(text)),
-                                    Err(err) => {
-                                        tracing::error!(
-                                            "failed to get clipboard text due to error: {err}"
-                                        );
-                                        None
-                                    }
+                    }
+                    Scancode::V => {
+                        if modifiers.ctrl {
+                            match self.window.subsystem().clipboard().clipboard_text() {
+                                Ok(text) => Some(Event::Text(text)),
+                                Err(err) => {
+                                    tracing::error!(
+                                        "failed to get clipboard text due to error: {err}"
+                                    );
+                                    None
                                 }
-                            } else {
-                                None
                             }
+                        } else {
+                            None
                         }
-                        _ => None,
                     }
-                    .or_else(|| {
-                        sdl_to_egui_key(scan_code).map(|key| Event::Key {
-                            key,
-                            pressed: true,
-                            modifiers,
-                        })
+                    _ => None,
+                }
+                .or_else(|| {
+                    sdl_to_egui_key(scan_code).map(|key| Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
                     })
-                }
+                })
+            }
 
-                sdl2::event::Event::KeyUp {
-                    scancode, keymod, ..
-                } => {
-                    let scan_code = scancode.expect("scan code empty");
-                    let modifiers = sdl_to_egui_modifiers(keymod);
-                    match scan_code {
-                        Scancode::C => {
-                            if modifiers.ctrl {
-                                Some(Event::Copy)
-                            } else {
-                                None
-                            }
+            sdl2::event::Event::KeyUp {
+                scancode, keymod, ..
+            } => {
+                let scan_code = scancode.expect("scan code empty");
+                let modifiers = sdl_to_egui_modifiers(keymod);
+                match scan_code {
+                    Scancode::C => {
+                        if modifiers.ctrl {
+                            Some(Event::Copy)
+                        } else {
+                            None
                         }
-                        Scancode::X => {
-                            if modifiers.ctrl {
-                                Some(Event::Cut)
-                            } else {
-                                None
-                            }
-                        }
-                        Scancode::V => {
-                            if modifiers.ctrl {
-                                Some(Event::Text(
-                                    self.window
-                                        .subsystem()
-                                        .clipboard()
-                                        .clipboard_text()
-                                        .unwrap_or_default(),
-                                ))
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
                     }
-                    .or_else(|| {
-                        sdl_to_egui_key(scan_code).map(|key| Event::Key {
-                            key,
-                            pressed: false,
-                            modifiers,
-                        })
+                    Scancode::X => {
+                        if modifiers.ctrl {
+                            Some(Event::Cut)
+                        } else {
+                            None
+                        }
+                    }
+                    Scancode::V => {
+                        if modifiers.ctrl {
+                            Some(Event::Text(
+                                self.window
+                                    .subsystem()
+                                    .clipboard()
+                                    .clipboard_text()
+                                    .unwrap_or_default(),
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+                .or_else(|| {
+                    sdl_to_egui_key(scan_code).map(|key| Event::Key {
+                        key,
+                        pressed: false,
+                        modifiers,
                     })
-                }
-                sdl2::event::Event::TextInput { text, .. } => Some(Event::Text(text)),
-                sdl2::event::Event::MouseMotion { x, y, .. } => {
-                    Some(Event::PointerMoved([x as f32, y as f32].into()))
-                }
-                sdl2::event::Event::MouseButtonDown {
-                    mouse_btn, x, y, ..
-                } => {
-                    if let Some(pb) = sdl_to_egui_pointer_button(mouse_btn) {
-                        Some(Event::PointerButton {
-                            pos: [x as f32, y as f32].into(),
-                            button: pb,
-                            pressed: true,
-                            modifiers,
-                        })
-                    } else {
-                        None
-                    }
-                }
-                sdl2::event::Event::MouseButtonUp {
-                    mouse_btn, x, y, ..
-                } => {
-                    if let Some(pb) = sdl_to_egui_pointer_button(mouse_btn) {
-                        Some(Event::PointerButton {
-                            pos: [x as f32, y as f32].into(),
-                            button: pb,
-                            pressed: false,
-                            modifiers,
-                        })
-                    } else {
-                        None
-                    }
-                }
-                sdl2::event::Event::MouseWheel { x, y, .. } => {
-                    Some(Event::Scroll([x as f32 * 25.0, y as f32 * 25.0].into()))
-                }
-
-                sdl2::event::Event::DropFile { filename, .. } => {
-                    self.raw_input.dropped_files.push(egui::DroppedFile {
-                        path: Some(
-                            PathBuf::from_str(&filename)
-                                .expect("invalid path given for dropped file event"),
-                        ),
-                        name: "".to_string(),
-                        last_modified: None,
-                        bytes: None,
-                    });
+                })
+            }
+            sdl2::event::Event::TextInput { text, .. } => Some(Event::Text(text)),
+            sdl2::event::Event::MouseMotion { x, y, .. } => {
+                Some(Event::PointerMoved([x as f32, y as f32].into()))
+            }
+            sdl2::event::Event::MouseButtonDown {
+                mouse_btn, x, y, ..
+            } => {
+                if let Some(pb) = sdl_to_egui_pointer_button(mouse_btn) {
+                    Some(Event::PointerButton {
+                        pos: [x as f32, y as f32].into(),
+                        button: pb,
+                        pressed: true,
+                        modifiers,
+                    })
+                } else {
                     None
                 }
-                rest => unimplemented!(
-                    "sdl2 egui backend doesn't support this kinda event yet: {rest:#?}"
-                ),
-            } {
-                self.raw_input.events.push(egui_event);
             }
+            sdl2::event::Event::MouseButtonUp {
+                mouse_btn, x, y, ..
+            } => {
+                if let Some(pb) = sdl_to_egui_pointer_button(mouse_btn) {
+                    Some(Event::PointerButton {
+                        pos: [x as f32, y as f32].into(),
+                        button: pb,
+                        pressed: false,
+                        modifiers,
+                    })
+                } else {
+                    None
+                }
+            }
+            sdl2::event::Event::MouseWheel { x, y, .. } => {
+                Some(Event::Scroll([x as f32 * 25.0, y as f32 * 25.0].into()))
+            }
+
+            sdl2::event::Event::DropFile { filename, .. } => {
+                self.raw_input.dropped_files.push(egui::DroppedFile {
+                    path: Some(
+                        PathBuf::from_str(&filename)
+                            .expect("invalid path given for dropped file event"),
+                    ),
+                    name: "".to_string(),
+                    last_modified: None,
+                    bytes: None,
+                });
+                None
+            }
+            rest => {
+                unimplemented!("sdl2 egui backend doesn't support this kinda event yet: {rest:#?}")
+            }
+        } {
+            self.raw_input.events.push(egui_event);
         }
     }
 }

@@ -4,7 +4,7 @@ use egui::{
     Rect, TextureId,
 };
 use egui_backend::egui;
-use egui_backend::{EguiGfxData, GfxBackend, WindowBackend};
+use egui_backend::{GfxBackend, WindowBackend};
 use intmap::IntMap;
 use std::{
     convert::TryInto,
@@ -13,22 +13,7 @@ use std::{
 };
 use tracing::{debug, info};
 pub use wgpu;
-use wgpu::{
-    Adapter, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
-    BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType,
-    BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, BufferBinding,
-    BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
-    CommandEncoder, CommandEncoderDescriptor, Device, DeviceDescriptor, Extent3d, FilterMode,
-    FragmentState, FrontFace, ImageCopyTexture, ImageDataLayout, IndexFormat, Instance, Limits,
-    LoadOp, MultisampleState, Operations, Origin3d, PipelineLayoutDescriptor, PolygonMode,
-    PowerPreference, PresentMode, PrimitiveState, PrimitiveTopology, Queue, RenderPass,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, Surface, SurfaceConfiguration, SurfaceTexture, Texture,
-    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
-    TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute,
-    VertexBufferLayout, VertexFormat, VertexState, VertexStepMode,
-};
+use wgpu::*;
 
 /// This provides a Gfx backend for egui by implementing the `crate::GfxBackend` trait.
 /// can be used by egui applications which want to render some objects  in the background but don't want a full renderer.
@@ -43,32 +28,38 @@ pub struct WgpuBackend {
     /// wgpu queue. if you have commands that you would like to submit, instead push them into `Self::command_encoders`
     pub queue: Arc<Queue>,
     /// contains egui specific wgpu data like textures or buffers or pipelines etc..
-    painter: EguiPainter,
-    /// this is the window surface
-    surface: Option<Surface>,
-    surface_formats_priority: Vec<TextureFormat>,
-    /// this configuration will be updated everytime we get a resize event during the `prepare_frame` fn
-    pub surface_config: SurfaceConfiguration,
-    /// once we acquire a swapchain image (surface texture), we will put it here.
-    surface_current_image: Option<SurfaceTexture>,
-    /// we create a view for the swapchain image ^^ and set it to this field during the `prepare_frame` fn.
-    /// users can assume that it will *always* be available during the `UserApp::run` fn. but don't keep any references as
-    /// it will be taken and submitted during the `present_frame` method after rendering is done.
-    /// surface is always cleared by wgpu, so no need to wipe it again.
-    pub surface_view: Option<TextureView>,
+    pub painter: EguiPainter,
+    pub surface_manager: SurfaceManager,
     /// this is where we store our command encoders. we will create one during the `prepare_frame` fn.
     /// users can just use this. or create new encoders, and push them into this vec.
     /// `wgpu::Queue::submit` is very expensive, so we will submit ALL command encoders at the same time during the `present_frame` method
     /// just before presenting the swapchain image (surface texture).
     pub command_encoders: Vec<CommandEncoder>,
 }
-
+pub struct SurfaceManager {
+    /// we create a view for the swapchain image and set it to this field during the `prepare_frame` fn.
+    /// users can assume that it will *always* be available during the `UserApp::run` fn. but don't keep any references as
+    /// it will be taken and submitted during the `present_frame` method after rendering is done.
+    /// surface is always cleared by wgpu, so no need to wipe it again.
+    pub surface_view: Option<TextureView>,
+    /// once we acquire a swapchain image (surface texture), we will put it here. surface_view will be created from this
+    pub surface_current_image: Option<SurfaceTexture>,
+    /// this is the window surface
+    pub surface: Option<Surface>,
+    /// this configuration needs to be updated with the latest resize
+    pub surface_config: SurfaceConfiguration,
+    /// Surface manager will iterate over this and find the first format that is supported by surface.
+    /// if we find one, we will set surface configuration to that format.
+    /// if we don't find one, we will just use the first surface format support.
+    /// so, if you don't care about the surface format, just set this to an empty vector.
+    pub surface_formats_priority: Vec<TextureFormat>,
+}
 pub struct WgpuConfig {
-    backends: Backends,
-    power_preference: PowerPreference,
-    device_descriptor: DeviceDescriptor<'static>,
-    surface_formats_priority: Vec<TextureFormat>,
-    surface_config: SurfaceConfiguration,
+    pub backends: Backends,
+    pub power_preference: PowerPreference,
+    pub device_descriptor: DeviceDescriptor<'static>,
+    pub surface_formats_priority: Vec<TextureFormat>,
+    pub surface_config: SurfaceConfiguration,
 }
 impl Default for WgpuConfig {
     fn default() -> Self {
@@ -87,37 +78,137 @@ impl Default for WgpuConfig {
                 height: 0,
                 present_mode: PresentMode::Fifo,
                 alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                view_formats: vec![TextureFormat::Bgra8UnormSrgb],
             },
-            surface_formats_priority: vec![
-                TextureFormat::Bgra8UnormSrgb,
-                TextureFormat::Rgba8UnormSrgb,
-            ],
+            surface_formats_priority: vec![],
         }
     }
 }
+impl SurfaceManager {
+    fn create_current_surface_texture_view(
+        &mut self,
+        window_backend: &mut impl WindowBackend,
+        device: &Device,
+    ) {
+        if let Some(surface) = self.surface.as_ref() {
+            let current_surface_image = surface.get_current_texture().unwrap_or_else(|e| {
+                let phy_fb_size = window_backend.get_live_physical_size_framebuffer().unwrap();
+                self.surface_config.width = phy_fb_size[0];
+                self.surface_config.height = phy_fb_size[1];
+                surface.configure(&device, &self.surface_config);
+                surface.get_current_texture().expect(&format!(
+                    "failed to get surface even after reconfiguration. {e}"
+                ))
+            });
+            let surface_view = current_surface_image
+                .texture
+                .create_view(&TextureViewDescriptor {
+                    label: Some("surface view"),
+                    format: Some(self.surface_config.format),
+                    dimension: Some(TextureViewDimension::D2),
+                    aspect: TextureAspect::All,
+                    base_mip_level: 0,
+                    mip_level_count: None,
+                    base_array_layer: 0,
+                    array_layer_count: None,
+                });
 
+            self.surface_view = Some(surface_view);
+            self.surface_current_image = Some(current_surface_image);
+        }
+    }
+    /// This basically checks if the surface needs creating. and then if needed, creates surface if window exists.
+    /// then, it does all the work of configuring the surface.
+    /// this is used during resume events to create a surface.
+    fn reconfigure_surface(
+        &mut self,
+        window_backend: &mut impl WindowBackend,
+        instance: &Instance,
+        adapter: &Adapter,
+        device: &Device,
+    ) {
+        if self.surface.is_some() {
+            return;
+        }
+        if let Some(window) = window_backend.get_window() {
+            self.surface = Some(unsafe {
+                instance
+                    .create_surface(window)
+                    .expect("failed to create surface")
+            });
+
+            let supported_formats = self
+                .surface
+                .as_ref()
+                .unwrap()
+                .get_capabilities(adapter)
+                .formats;
+            debug!("supported formats of the surface: {supported_formats:#?}");
+
+            let mut compatible_format_found = false;
+            for sfmt in self.surface_formats_priority.iter() {
+                debug!("checking if {sfmt:?} is supported");
+                if supported_formats.contains(sfmt) {
+                    debug!("{sfmt:?} is supported. setting it as surface format");
+                    self.surface_config.format = *sfmt;
+                    compatible_format_found = true;
+                    break;
+                }
+            }
+            if !compatible_format_found {
+                tracing::error!("could not find compatible surface format from user provided formats. using the first supported format instead");
+                self.surface_config.format = supported_formats
+                    .first()
+                    .copied()
+                    .expect("surface has zero supported texture formats");
+            }
+            self.resize_framebuffer(device, window_backend);
+        }
+    }
+    fn resize_framebuffer(&mut self, device: &Device, window_backend: &mut impl WindowBackend) {
+        if let Some(size) = window_backend.get_live_physical_size_framebuffer() {
+            self.surface_config.width = size[0];
+            self.surface_config.height = size[1];
+
+            self.surface
+                .as_ref()
+                .unwrap()
+                .configure(device, &self.surface_config);
+        }
+    }
+    fn suspend(&mut self) {
+        self.surface = None;
+        self.surface_current_image = None;
+        self.surface_view = None;
+    }
+}
 impl WgpuBackend {
-    pub async fn new_async<W: WindowBackend>(
-        window_backend: &mut W,
-        config: <Self as GfxBackend<W>>::Configuration,
+    pub async fn new_async(
+        window_backend: &mut impl WindowBackend,
+        config: <Self as GfxBackend>::Configuration,
     ) -> Self {
         let WgpuConfig {
             power_preference,
             device_descriptor,
             surface_formats_priority,
-            mut surface_config,
+            surface_config,
             backends,
         } = config;
         debug!("using wgpu backends: {:?}", backends);
-        let instance = Arc::new(Instance::new(backends));
+        let instance = Arc::new(Instance::new(InstanceDescriptor {
+            backends,
+            dx12_shader_compiler: Default::default(),
+        }));
         debug!("iterating over all adapters");
-        #[cfg(target = "wasm32-unknown-unknown")]
+        #[cfg(not(target_arch = "wasm32"))]
         for adapter in instance.enumerate_adapters(Backends::all()) {
             debug!("adapter: {:#?}", adapter.get_info());
         }
-        let mut surface = window_backend
-            .get_window()
-            .map(|w| unsafe { instance.create_surface(w) });
+        let surface = window_backend.get_window().map(|w| unsafe {
+            instance
+                .create_surface(w)
+                .expect("failed to create surface")
+        });
 
         info!("is surfaced created at startup?: {}", surface.is_some());
 
@@ -141,20 +232,23 @@ impl WgpuBackend {
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
+        let mut surface_manager = SurfaceManager {
+            surface_view: None,
+            surface_current_image: None,
+            surface,
+            surface_config,
+            surface_formats_priority,
+        };
+        if let Some(framebuffer_size) = window_backend.get_live_physical_size_framebuffer() {
+            surface_manager.surface_config.width = framebuffer_size[0];
+            surface_manager.surface_config.height = framebuffer_size[1];
+            surface_manager.reconfigure_surface(window_backend, &instance, &adapter, &device);
+        }
 
         debug!("device features: {:#?}", device.features());
         debug!("device limits: {:#?}", device.limits());
-        Self::reconfigure_surface(
-            window_backend,
-            &mut surface,
-            &instance,
-            &adapter,
-            &device,
-            &surface_formats_priority,
-            &mut surface_config,
-        );
 
-        let painter = EguiPainter::new(&device, surface_config.format);
+        let painter = EguiPainter::new(&device, surface_manager.surface_config.format);
 
         Self {
             instance,
@@ -162,133 +256,50 @@ impl WgpuBackend {
             device,
             queue,
             painter,
-            surface,
-            surface_config,
-            surface_view: None,
-            surface_current_image: None,
             command_encoders: Vec::new(),
-            surface_formats_priority,
-        }
-    }
-    /// This basically checks if the surface needs creating. and then if needed, creates surface if window exists.
-    /// then, it does all the work of configuring the surface.
-    /// this is used during resume events to create a surface.
-    fn reconfigure_surface<W: WindowBackend>(
-        window_backend: &mut W,
-        surface: &mut Option<Surface>,
-        instance: &Instance,
-        adapter: &Adapter,
-        device: &Device,
-        surface_formats_priority: &[TextureFormat],
-        surface_config: &mut SurfaceConfiguration,
-    ) {
-        if surface.is_some() {
-            return;
-        }
-        if let Some(window) = window_backend.get_window() {
-            *surface = Some(unsafe { instance.create_surface(window) });
-
-            let supported_formats = surface.as_ref().unwrap().get_supported_formats(adapter);
-            debug!("supported formats of the surface: {supported_formats:#?}");
-
-            let mut compatible_format_found = false;
-            for sfmt in surface_formats_priority.iter() {
-                debug!("checking if {sfmt:?} is supported");
-                if supported_formats.contains(sfmt) {
-                    debug!("{sfmt:?} is supported. setting it as surface format");
-                    surface_config.format = *sfmt;
-                    compatible_format_found = true;
-                    break;
-                }
-            }
-            if !compatible_format_found {
-                tracing::error!("could not find compatible surface format from user provided formats. using the first supported format instead");
-                surface_config.format = supported_formats
-                    .first()
-                    .copied()
-                    .expect("surface has zero supported texture formats");
-            }
-            let size = window_backend.get_live_physical_size_framebuffer().unwrap();
-            surface_config.width = size[0];
-            surface_config.height = size[1];
-
-            surface.as_ref().unwrap().configure(device, surface_config);
+            surface_manager,
         }
     }
 }
-impl<W: WindowBackend> GfxBackend<W> for WgpuBackend {
+impl GfxBackend for WgpuBackend {
     type Configuration = WgpuConfig;
 
-    fn new(window_backend: &mut W, config: Self::Configuration) -> Self {
+    fn new(window_backend: &mut impl WindowBackend, config: Self::Configuration) -> Self {
         pollster::block_on(Self::new_async(window_backend, config))
     }
 
-    fn suspend(&mut self, _window_backend: &mut W) {
-        self.surface = None;
-        self.surface_current_image = None;
-        self.surface_view = None;
-    }
-
-    fn resume(&mut self, window_backend: &mut W) {
-        Self::reconfigure_surface(
+    fn resume(&mut self, window_backend: &mut impl WindowBackend) {
+        self.surface_manager.reconfigure_surface(
             window_backend,
-            &mut self.surface,
             &self.instance,
             &self.adapter,
             &self.device,
-            &self.surface_formats_priority,
-            &mut self.surface_config,
         );
         self.painter
-            .on_resume(&self.device, self.surface_config.format);
+            .on_resume(&self.device, self.surface_manager.surface_config.format);
     }
 
-    fn prepare_frame(&mut self, framebuffer_size_update: bool, window_backend: &mut W) {
-        if framebuffer_size_update {
-            let size = window_backend.get_live_physical_size_framebuffer().unwrap();
-            self.surface_config.width = size[0];
-            self.surface_config.height = size[1];
-            self.surface
-                .as_ref()
-                .unwrap()
-                .configure(&self.device, &self.surface_config);
-        }
-        assert!(self.surface_current_image.is_none());
-        assert!(self.surface_view.is_none());
-        if let Some(surface) = self.surface.as_ref() {
-            let current_surface_image = surface.get_current_texture().unwrap_or_else(|e| {
-                let phy_fb_size = window_backend.get_live_physical_size_framebuffer().unwrap();
-                self.surface_config.width = phy_fb_size[0];
-                self.surface_config.height = phy_fb_size[1];
-                surface.configure(&self.device, &self.surface_config);
-                surface.get_current_texture().expect(&format!(
-                    "failed to get surface even after reconfiguration. {e}"
-                ))
-            });
-            let surface_view = current_surface_image
-                .texture
-                .create_view(&TextureViewDescriptor {
-                    label: Some("surface view"),
-                    format: Some(self.surface_config.format),
-                    dimension: Some(TextureViewDimension::D2),
-                    aspect: TextureAspect::All,
-                    base_mip_level: 0,
-                    mip_level_count: None,
-                    base_array_layer: 0,
-                    array_layer_count: None,
-                });
-
-            self.surface_view = Some(surface_view);
-            self.surface_current_image = Some(current_surface_image);
-        }
+    fn prepare_frame(&mut self, window_backend: &mut impl WindowBackend) {
+        self.surface_manager
+            .create_current_surface_texture_view(window_backend, &self.device);
     }
 
-    fn render(&mut self, egui_gfx_data: EguiGfxData) {
-        self.painter.upload_egui_data(
+    fn render_egui(
+        &mut self,
+        meshes: Vec<egui::ClippedPrimitive>,
+        textures_delta: egui::TexturesDelta,
+        logical_screen_size: [f32; 2],
+    ) {
+        let draw_calls = self.painter.upload_egui_data(
             &self.device,
             &self.queue,
-            egui_gfx_data,
-            [self.surface_config.width, self.surface_config.height],
+            meshes,
+            textures_delta,
+            logical_screen_size,
+            [
+                self.surface_manager.surface_config.width,
+                self.surface_manager.surface_config.height,
+            ],
         );
         let mut command_encoder = self
             .device
@@ -300,6 +311,7 @@ impl<W: WindowBackend> GfxBackend<W> for WgpuBackend {
                 label: Some("egui render pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: self
+                        .surface_manager
                         .surface_view
                         .as_ref()
                         .expect("failed ot get surface view for egui render pass creation"),
@@ -311,26 +323,38 @@ impl<W: WindowBackend> GfxBackend<W> for WgpuBackend {
                 })],
                 depth_stencil_attachment: None,
             });
-            self.painter.draw_egui_with_renderpass(&mut egui_pass);
+            self.painter
+                .draw_egui_with_renderpass(&mut egui_pass, draw_calls);
         }
         self.command_encoders.push(command_encoder);
     }
 
-    fn present(&mut self, _window_backend: &mut W) {
+    fn present(&mut self, _window_backend: &mut impl WindowBackend) {
         self.queue.submit(
             std::mem::take(&mut self.command_encoders)
                 .into_iter()
                 .map(|encoder| encoder.finish()),
         );
         {
-            self.surface_view
+            self.surface_manager
+                .surface_view
                 .take()
                 .expect("failed to get surface view to present");
         }
-        self.surface_current_image
+        self.surface_manager
+            .surface_current_image
             .take()
             .expect("failed to surface texture to preset")
             .present();
+    }
+
+    fn resize_framebuffer(&mut self, window_backend: &mut impl WindowBackend) {
+        self.surface_manager
+            .resize_framebuffer(&self.device, window_backend);
+    }
+
+    fn suspend(&mut self, _window_backend: &mut impl WindowBackend) {
+        self.surface_manager.suspend();
     }
 }
 
@@ -387,7 +411,6 @@ pub struct EguiPainter {
     user_textures: IntMap<EguiTexture>,
     /// textures to free
     delete_textures: Vec<TextureId>,
-    draw_calls: Vec<EguiDrawCalls>,
     custom_data: IdTypeMap,
 }
 
@@ -397,7 +420,7 @@ pub struct EguiTexture {
     pub view: TextureView,
     pub bindgroup: BindGroup,
 }
-/// DrawCalls list so that we can just get all the work done in the pre_render stage (upload egui data)
+/// We take all the
 pub enum EguiDrawCalls {
     Mesh {
         clip_rect: [u32; 4],
@@ -413,16 +436,20 @@ pub enum EguiDrawCalls {
     },
 }
 impl EguiPainter {
-    pub fn draw_egui_with_renderpass<'rpass>(&'rpass mut self, rpass: &mut RenderPass<'rpass>) {
+    pub fn draw_egui_with_renderpass<'rpass>(
+        &'rpass mut self,
+        rpass: &mut RenderPass<'rpass>,
+        draw_calls: Vec<EguiDrawCalls>,
+    ) {
         // rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &self.screen_size_bind_group, &[]);
 
         rpass.set_vertex_buffer(0, self.vb.slice(..));
         rpass.set_index_buffer(self.ib.slice(..), IndexFormat::Uint32);
-        for draw_call in self.draw_calls.iter() {
+        for draw_call in draw_calls {
             match draw_call {
-                &EguiDrawCalls::Mesh {
+                EguiDrawCalls::Mesh {
                     clip_rect,
                     texture_id,
                     base_vertex,
@@ -431,8 +458,9 @@ impl EguiPainter {
                 } => {
                     let [x, y, width, height] = clip_rect;
                     rpass.set_scissor_rect(x, y, width, height);
-                    // because webgl : Draw elements base vertex is not supported
-                    // we can't use base_vertex argument of draw_indexed. we will make sure that bound vertex buffer starts from base_vertex at zero.
+                    // In webgl, base vertex is not supported in the draw_indexed function (draw elements in webgl2).
+                    // so, we instead bind the buffer with different offsets every call so that indices will point to their respective vertices.
+                    // this is possible because webgl2 has bindBufferRange (which allows specifying a offset as the start of the buffer binding)
                     rpass.set_vertex_buffer(0, self.vb.slice(base_vertex as u64 * 20..));
                     match texture_id {
                         TextureId::Managed(key) => {
@@ -455,7 +483,7 @@ impl EguiPainter {
                     paint_callback,
                     paint_callback_info,
                 } => {
-                    let [x, y, width, height] = *clip_rect;
+                    let [x, y, width, height] = clip_rect;
                     rpass.set_scissor_rect(x, y, width, height);
                     (paint_callback
                         .callback
@@ -593,7 +621,6 @@ impl EguiPainter {
             vb_len: 0,
             ib_len: 0,
             delete_textures: Vec::new(),
-            draw_calls: Vec::new(),
             custom_data: IdTypeMap::default(),
             user_textures: Default::default(),
             screen_size_bindgroup_layout,
@@ -617,37 +644,36 @@ impl EguiPainter {
         textures_delta_set: Vec<(TextureId, ImageDelta)>,
     ) {
         for (tex_id, delta) in textures_delta_set {
-            let (pixels, size) = match delta.image {
-                egui::ImageData::Color(_) => todo!(),
+            let width = delta.image.width() as u32;
+            let height = delta.image.height() as u32;
+
+            let size = Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            };
+
+            let data_color32 = match delta.image {
+                egui::ImageData::Color(color_image) => color_image.pixels,
                 egui::ImageData::Font(font_image) => {
-                    let pixels: Vec<u8> = font_image
-                        .srgba_pixels(Some(1.0))
-                        .flat_map(|c| c.to_array())
-                        .collect();
-                    (pixels, font_image.size)
+                    font_image.srgba_pixels(Some(1.0)).collect::<Vec<_>>()
                 }
             };
+            let data_bytes: &[u8] = bytemuck::cast_slice(data_color32.as_slice());
             match tex_id {
                 egui::TextureId::Managed(tex_id) => {
                     if let Some(_) = delta.pos {
                     } else {
-                        let mip_level_count = if tex_id == 0 {
-                            1
-                        } else {
-                            panic!("get mip map count formula")
-                        };
+                        let mip_level_count = 1;
                         let new_texture = dev.create_texture(&TextureDescriptor {
                             label: None,
-                            size: Extent3d {
-                                width: size[0] as u32,
-                                height: size[1] as u32,
-                                depth_or_array_layers: 1,
-                            },
+                            size,
                             mip_level_count,
                             sample_count: 1,
                             dimension: TextureDimension::D2,
                             format: TextureFormat::Rgba8UnormSrgb,
                             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                            view_formats: &[TextureFormat::Rgba8UnormSrgb],
                         });
 
                         queue.write_texture(
@@ -657,23 +683,19 @@ impl EguiPainter {
                                 origin: Origin3d::default(),
                                 aspect: TextureAspect::All,
                             },
-                            &pixels,
+                            &data_bytes,
                             ImageDataLayout {
                                 offset: 0,
                                 bytes_per_row: Some(
-                                    NonZeroU32::new(size[0] as u32 * 4)
+                                    NonZeroU32::new(size.width as u32 * 4)
                                         .expect("texture bytes per row is zero"),
                                 ),
                                 rows_per_image: Some(
-                                    NonZeroU32::new(size[1] as u32)
+                                    NonZeroU32::new(size.height as u32)
                                         .expect("texture rows count is zero"),
                                 ),
                             },
-                            Extent3d {
-                                width: size[0] as u32,
-                                height: size[1] as u32,
-                                depth_or_array_layers: 1,
-                            },
+                            size,
                         );
                         let view = new_texture.create_view(&TextureViewDescriptor {
                             label: None,
@@ -724,15 +746,12 @@ impl EguiPainter {
         &mut self,
         dev: &Device,
         queue: &Queue,
-        EguiGfxData {
-            meshes,
-            textures_delta,
-            screen_size_logical,
-        }: EguiGfxData,
-        screen_size_physical: [u32; 2],
-    ) {
-        let scale = screen_size_physical[0] as f32 / screen_size_logical[0];
-        self.draw_calls.clear();
+        meshes: Vec<egui::ClippedPrimitive>,
+        textures_delta: egui::TexturesDelta,
+        logical_screen_size: [f32; 2],
+        physical_framebuffer_size: [u32; 2],
+    ) -> Vec<EguiDrawCalls> {
+        let scale = physical_framebuffer_size[0] as f32 / logical_screen_size[0];
         // first deal with textures
         {
             // we need to delete textures in textures_delta.free AFTER the draw calls
@@ -756,7 +775,7 @@ impl EguiPainter {
         queue.write_buffer(
             &self.screen_size_buffer,
             0,
-            cast_slice(&screen_size_logical),
+            cast_slice(&logical_screen_size),
         );
 
         {
@@ -768,9 +787,41 @@ impl EguiPainter {
                     (vb_len, ib_len)
                 }
             });
-            if vb_len == 0 {
-                return;
+            if vb_len == 0 || ib_len == 0 {
+                return meshes
+                    .into_iter()
+                    .filter_map(|p| match p.primitive {
+                        egui::epaint::Primitive::Mesh(_) => None,
+                        egui::epaint::Primitive::Callback(cb) => {
+                            (cb.callback
+                                .downcast_ref::<CallbackFn>()
+                                .expect("failed to downcast egui callback fn")
+                                .prepare)(
+                                dev, queue, &mut self.custom_data
+                            );
+                            egui_backend::util::scissor_from_clip_rect(
+                                &p.clip_rect,
+                                scale,
+                                physical_framebuffer_size,
+                            )
+                            .map(|clip_rect| EguiDrawCalls::Callback {
+                                clip_rect,
+                                paint_callback: cb,
+                                paint_callback_info: PaintCallbackInfo {
+                                    viewport: Rect::from_min_size(
+                                        Default::default(),
+                                        logical_screen_size.into(),
+                                    ),
+                                    clip_rect: p.clip_rect,
+                                    pixels_per_point: scale,
+                                    screen_size_px: physical_framebuffer_size,
+                                },
+                            })
+                        }
+                    })
+                    .collect();
             }
+
             // resize if vertex or index buffer capcities are not enough
             if self.vb_len < vb_len {
                 self.vb = dev.create_buffer(&BufferDescriptor {
@@ -791,63 +842,50 @@ impl EguiPainter {
                 self.ib_len = ib_len;
             }
             // create mutable slices for vertex and index buffers
-            let mut vertex_buffer_mut = queue.write_buffer_with(
-                &self.vb,
-                0,
-                NonZeroU64::new(
-                    (self.vb_len * 20)
-                        .try_into()
-                        .expect("unreachable as usize is u64"),
+            let mut vertex_buffer_mut = queue
+                .write_buffer_with(
+                    &self.vb,
+                    0,
+                    NonZeroU64::new(
+                        (self.vb_len * 20)
+                            .try_into()
+                            .expect("unreachable as usize is u64"),
+                    )
+                    .expect("vertex buffer length should not be zero"),
                 )
-                .expect("vertex buffer length should not be zero"),
-            );
-            let mut index_buffer_mut = queue.write_buffer_with(
-                &self.ib,
-                0,
-                NonZeroU64::new(
-                    (self.ib_len * 4)
-                        .try_into()
-                        .expect("unreachable as usize is u64"),
+                .expect("failed to create queuewritebufferview");
+            let mut index_buffer_mut = queue
+                .write_buffer_with(
+                    &self.ib,
+                    0,
+                    NonZeroU64::new(
+                        (self.ib_len * 4)
+                            .try_into()
+                            .expect("unreachable as usize is u64"),
+                    )
+                    .expect("index buffer length should not be zero"),
                 )
-                .expect("index buffer length should not be zero"),
-            );
+                .expect("failed to create queuewritebufferview");
             // offsets from where to start writing vertex or index buffer data
             let mut vb_offset = 0;
             let mut ib_offset = 0;
+            let mut draw_calls = vec![];
             for clipped_primitive in meshes {
                 let ClippedPrimitive {
                     clip_rect,
                     primitive,
                 } = clipped_primitive;
-                // copy paste from official egui impl because i have no idea what this is :D
-                let clip_min_x = scale * clip_rect.min.x;
-                let clip_min_y = scale * clip_rect.min.y;
-                let clip_max_x = scale * clip_rect.max.x;
-                let clip_max_y = scale * clip_rect.max.y;
-                let clip_min_x = clip_min_x.clamp(0.0, screen_size_physical[0] as f32);
-                let clip_min_y = clip_min_y.clamp(0.0, screen_size_physical[1] as f32);
-                let clip_max_x = clip_max_x.clamp(clip_min_x, screen_size_physical[0] as f32);
-                let clip_max_y = clip_max_y.clamp(clip_min_y, screen_size_physical[1] as f32);
-
-                let clip_min_x = clip_min_x.round() as u32;
-                let clip_min_y = clip_min_y.round() as u32;
-                let clip_max_x = clip_max_x.round() as u32;
-                let clip_max_y = clip_max_y.round() as u32;
-
-                let width = (clip_max_x - clip_min_x).max(1);
-                let height = (clip_max_y - clip_min_y).max(1);
-
-                // Clip scissor rectangle to target size.
-                let clip_x = clip_min_x.min(screen_size_physical[0]);
-                let clip_y = clip_min_y.min(screen_size_physical[1]);
-                let clip_width = width.min(screen_size_physical[0] - clip_x);
-                let clip_height = height.min(screen_size_physical[1] - clip_y);
-
-                // Skip rendering with zero-sized clip areas.
-                if clip_width == 0 || clip_height == 0 {
+                let primitive_clip_rect = clip_rect;
+                let clip_rect = if let Some(c) = egui_backend::util::scissor_from_clip_rect(
+                    &primitive_clip_rect,
+                    scale,
+                    physical_framebuffer_size,
+                ) {
+                    c
+                } else {
                     continue;
-                }
-                let scissor_rect = [clip_x, clip_y, clip_width, clip_height];
+                };
+
                 match primitive {
                     egui::epaint::Primitive::Mesh(mesh) => {
                         let Mesh {
@@ -865,8 +903,8 @@ impl EguiPainter {
                         index_buffer_mut[ib_offset..new_ib_offset]
                             .copy_from_slice(cast_slice(&indices));
                         // record draw call
-                        self.draw_calls.push(EguiDrawCalls::Mesh {
-                            clip_rect: scissor_rect,
+                        draw_calls.push(EguiDrawCalls::Mesh {
+                            clip_rect,
                             texture_id,
                             // vertex buffer offset is in bytes. so, we divide by size to get the "nth" vertex to use as base
                             base_vertex: (vb_offset / 20)
@@ -885,22 +923,23 @@ impl EguiPainter {
                             .downcast_ref::<CallbackFn>()
                             .expect("failed to downcast egui callback fn")
                             .prepare)(dev, queue, &mut self.custom_data);
-                        self.draw_calls.push(EguiDrawCalls::Callback {
-                            clip_rect: scissor_rect,
+                        draw_calls.push(EguiDrawCalls::Callback {
+                            clip_rect,
                             paint_callback: cb,
                             paint_callback_info: PaintCallbackInfo {
                                 viewport: Rect::from_min_size(
                                     Default::default(),
-                                    screen_size_logical.into(),
+                                    logical_screen_size.into(),
                                 ),
-                                clip_rect,
+                                clip_rect: primitive_clip_rect,
                                 pixels_per_point: scale,
-                                screen_size_px: screen_size_physical,
+                                screen_size_px: physical_framebuffer_size,
                             },
                         });
                     }
                 }
             }
+            draw_calls
         }
     }
 }

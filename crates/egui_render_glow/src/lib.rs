@@ -1,5 +1,5 @@
 use egui::TextureId;
-use egui_backend::*;
+use egui_backend::{egui::TexturesDelta, *};
 use tracing::{info, warn};
 
 use bytemuck::cast_slice;
@@ -135,10 +135,10 @@ impl Default for GlowConfig {
 //         glow_error!(gl);
 //     }
 // }
-impl<W: WindowBackend> GfxBackend<W> for GlowBackend {
+impl GfxBackend for GlowBackend {
     type Configuration = GlowConfig;
 
-    fn new(window_backend: &mut W, _config: Self::Configuration) -> Self {
+    fn new(window_backend: &mut impl WindowBackend, _config: Self::Configuration) -> Self {
         #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
         let glow_context = {
             use raw_window_handle::HasRawWindowHandle;
@@ -202,45 +202,55 @@ impl<W: WindowBackend> GfxBackend<W> for GlowBackend {
         }
     }
 
-    fn suspend(&mut self, _window_backend: &mut W) {
+    fn suspend(&mut self, _window_backend: &mut impl WindowBackend) {
         unimplemented!("glow render backend doesn't support suspend callback yet");
     }
 
-    fn resume(&mut self, _window_backend: &mut W) {
+    fn resume(&mut self, _window_backend: &mut impl WindowBackend) {
         tracing::warn!("resume does nothing on glow backend");
     }
 
-    fn prepare_frame(&mut self, framebuffer_size_update: bool, window_backend: &mut W) {
-        if framebuffer_size_update {
-            if let Some(fb_size) = window_backend.get_live_physical_size_framebuffer() {
-                self.framebuffer_size = fb_size;
-                self.painter.screen_size_physical = fb_size;
-                unsafe {
-                    self.glow_context
-                        .viewport(0, 0, fb_size[0] as i32, fb_size[1] as i32);
-                }
-            }
-        }
+    fn prepare_frame(&mut self, _window_backend: &mut impl WindowBackend) {
         unsafe {
             self.glow_context.disable(glow::SCISSOR_TEST);
             self.glow_context.clear(glow::COLOR_BUFFER_BIT);
         }
     }
 
-    fn render(&mut self, egui_gfx_data: EguiGfxData) {
-        unsafe {
-            self.painter
-                .prepare_render(&self.glow_context, egui_gfx_data);
-            self.painter.render(&self.glow_context);
-        }
-    }
-
-    fn present(&mut self, _window_backend: &mut W) {
+    fn present(&mut self, _window_backend: &mut impl WindowBackend) {
         #[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
         {
             _window_backend.swap_buffers();
         }
         // on wasm, there's no swap buffers.. the browser takes care of it automatically.
+    }
+
+    fn resize_framebuffer(&mut self, window_backend: &mut impl WindowBackend) {
+        if let Some(fb_size) = window_backend.get_live_physical_size_framebuffer() {
+            self.framebuffer_size = fb_size;
+            self.painter.screen_size_physical = fb_size;
+            unsafe {
+                self.glow_context
+                    .viewport(0, 0, fb_size[0] as i32, fb_size[1] as i32);
+            }
+        }
+    }
+
+    fn render_egui(
+        &mut self,
+        meshes: Vec<egui::ClippedPrimitive>,
+        textures_delta: egui::TexturesDelta,
+        logical_screen_size: [f32; 2],
+    ) {
+        unsafe {
+            self.painter.prepare_render(
+                &self.glow_context,
+                meshes,
+                textures_delta,
+                logical_screen_size,
+            );
+            self.painter.render_egui(&self.glow_context);
+        }
     }
 }
 
@@ -323,7 +333,7 @@ pub struct Painter {
     pub clipped_primitives: Vec<egui::ClippedPrimitive>,
     pub textures_to_delete: Vec<TextureId>,
     /// updated every frame from the egui gfx output struct
-    pub screen_size_logical: [f32; 2],
+    pub logical_screen_size: [f32; 2],
     /// must update on framebuffer resize.
     pub screen_size_physical: [u32; 2],
 }
@@ -362,7 +372,7 @@ impl Painter {
                 u_sampler,
                 clipped_primitives: Vec::new(),
                 textures_to_delete: Vec::new(),
-                screen_size_logical: [0.0; 2],
+                logical_screen_size: [0.0; 2],
                 screen_size_physical: [0; 2],
             }
         }
@@ -370,16 +380,14 @@ impl Painter {
     pub unsafe fn prepare_render(
         &mut self,
         glow_context: &glow::Context,
-        egui_gfx_output: EguiGfxData,
+
+        meshes: Vec<egui::ClippedPrimitive>,
+        textures_delta: TexturesDelta,
+        logical_screen_size: [f32; 2],
     ) {
-        let EguiGfxData {
-            meshes,
-            textures_delta,
-            screen_size_logical,
-        } = egui_gfx_output;
         self.textures_to_delete = textures_delta.free;
         self.clipped_primitives = meshes;
-        self.screen_size_logical = screen_size_logical;
+        self.logical_screen_size = logical_screen_size;
         glow_error!(glow_context);
 
         // update textures
@@ -462,9 +470,9 @@ impl Painter {
             glow_error!(glow_context);
         }
     }
-    pub unsafe fn render(&mut self, glow_context: &glow::Context) {
+    pub unsafe fn render_egui(&mut self, glow_context: &glow::Context) {
         let screen_size_physical = self.screen_size_physical;
-        let screen_size_logical = self.screen_size_logical;
+        let screen_size_logical = self.logical_screen_size;
         let scale = screen_size_physical[0] as f32 / screen_size_logical[0];
 
         // setup egui configuration

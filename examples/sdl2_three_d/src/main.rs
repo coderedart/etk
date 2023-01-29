@@ -4,34 +4,27 @@ use egui_render_three_d::{
 };
 
 use egui::Window;
-use egui_backend::{
-    egui::{self, RawInput},
-    BackendConfig, GfxBackend, UserAppData, WindowBackend,
-};
+use egui_backend::{egui, BackendConfig, EguiUserApp, GfxBackend, WindowBackend};
 use egui_window_sdl2::Sdl2Backend;
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 struct App {
     frame_count: usize,
     bg_color: egui::Color32,
+    egui_context: egui::Context,
+    threed_backend: ThreeDBackend,
 }
 impl App {
-    pub fn new(_gl: &ThreeDBackend) -> Self {
+    pub fn new(tdb: ThreeDBackend) -> Self {
         Self {
             frame_count: 0,
             bg_color: egui::Color32::LIGHT_BLUE,
+            egui_context: Default::default(),
+            threed_backend: tdb,
         }
     }
 }
-impl UserAppData<Sdl2Backend, ThreeDBackend> for App {
-    fn run(
-        &mut self,
-        egui_context: &egui::Context,
-        raw_input: RawInput,
-        _window_backend: &mut Sdl2Backend,
-        gfx_backend: &mut ThreeDBackend,
-    ) -> egui::FullOutput {
-        egui_context.begin_frame(raw_input);
-
+impl EguiUserApp<Sdl2Backend> for App {
+    fn gui_run(&mut self, egui_context: &egui::Context, _window_backend: &mut Sdl2Backend) {
         Window::new("egui user window").show(egui_context, |ui| {
             ui.label("hello");
             ui.label(format!("frame number: {}", self.frame_count));
@@ -45,14 +38,22 @@ impl UserAppData<Sdl2Backend, ThreeDBackend> for App {
         let rgba = rgba.map(|component| component as f32 / 255.0);
 
         let screen = RenderTarget::screen(
-            &gfx_backend.context,
-            gfx_backend.glow_backend.framebuffer_size[0],
-            gfx_backend.glow_backend.framebuffer_size[1],
+            &self.threed_backend.context,
+            self.threed_backend.glow_backend.framebuffer_size[0],
+            self.threed_backend.glow_backend.framebuffer_size[1],
         );
 
         screen.clear(ClearState::color(rgba[0], rgba[1], rgba[2], rgba[3]));
+    }
 
-        egui_context.end_frame()
+    type UserGfxBackend = ThreeDBackend;
+
+    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend {
+        &mut self.threed_backend
+    }
+
+    fn get_egui_context(&mut self) -> egui::Context {
+        self.egui_context.clone()
     }
 }
 
@@ -70,8 +71,8 @@ pub fn fake_main() {
         },
     );
     let glow_backend = ThreeDBackend::new(&mut window_backend, Default::default());
-    let app = App::new(&glow_backend);
-    window_backend.run_event_loop(glow_backend, app);
+    let app = App::new(glow_backend);
+    window_backend.run_event_loop(app);
 }
 
 fn main() {

@@ -7,6 +7,12 @@ use winit::{
     event::{ModifiersState, VirtualKeyCode},
     event_loop::{ControlFlow, EventLoop},
 };
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
+#[cfg(target_arch = "wasm32")]
+use winit::platform::web::{WindowBuilderExtWebSys, WindowExtWebSys};
+
 /// config that you provide to winit backend
 #[derive(Debug)]
 pub struct WinitConfig {
@@ -36,6 +42,7 @@ impl Default for WinitConfig {
 pub struct WinitBackend {
     /// we want to take out the event loop when we call the  `WindowBackend::run_event_loop` fn
     /// so, this will always be `None` once we start the event loop
+    /// TODO: If we want the EventLoop to be generic, then, we have to make the whole WinitBackend struct to be generic too. don't know if its worth the complexity.
     pub event_loop: Option<EventLoop<()>>,
     /// the winit window. on android, this might be None when suspended. and recreated when resumed.
     /// on other platforms, we just create the window before entering event loop.
@@ -74,13 +81,12 @@ impl WindowBackend for WinitBackend {
         let event_loop = event_loop.with_android_app(config.android_app);
 
         let el = event_loop.build();
-        tracing::error!("this is loggging");
 
         #[allow(unused_mut)]
         let mut window_builder = WindowBuilder::new()
             .with_resizable(true)
             .with_title(&config.title);
-        #[cfg(target = "wasm32-unknown-unknown")]
+        #[cfg(target_arch = "wasm32")]
         let window = {
             use wasm_bindgen::JsCast;
             use winit::platform::web::{WindowBuilderExtWebSys, WindowExtWebSys};
@@ -88,7 +94,6 @@ impl WindowBackend for WinitBackend {
                 .expect("failed ot get websys window")
                 .document()
                 .expect("failed to get websys doc");
-            tracing::error!("this is web loggging");
             let canvas = config.dom_element_id.map(|canvas_id| {
                     document
                         .get_element_by_id(&canvas_id)
@@ -97,20 +102,19 @@ impl WindowBackend for WinitBackend {
                 });
             window_builder = window_builder.with_canvas(canvas);
             // create winit window
-            let window = winow_builder
+            let window = window_builder
                 .clone()
                 .build(&el)
                 .expect("failed to create winit window");
 
             Some(window)
         };
-        tracing::error!("this is not web");
-        #[cfg(all(not(target_os = "android"), not(target = "wasm32-unknown-unknown")))]
+        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
         let window = Some(
             window_builder
                 .clone()
                 .build(&el)
-                .expect("failed ot create winit window"),
+                .expect("failed to create winit window"),
         );
 
         #[cfg(target_os = "android")]
@@ -154,17 +158,11 @@ impl WindowBackend for WinitBackend {
         }
     }
 
-    fn run_event_loop<G: GfxBackend<Self> + 'static, U: UserAppData<Self, G> + 'static>(
-        mut self,
-        mut gfx_backend: G,
-        mut user_app: U,
-    ) {
-        let egui_context = egui::Context::default();
+    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, mut user_app: U) {
         let mut suspended = true;
+        let mut events_wait_duration = std::time::Duration::ZERO;
         self.event_loop.take().expect("event loop missing").run(
             move |event, _event_loop, control_flow| {
-                *control_flow = ControlFlow::Poll;
-
                 match event {
                     event::Event::Suspended => {
                         suspended = true;
@@ -173,7 +171,7 @@ impl WindowBackend for WinitBackend {
                         panic!("suspend on non-android platforms is not supported at the moment");
                         #[cfg(target_os = "android")]
                         {
-                            gfx_backend.suspend(&mut self);
+                            user_app.suspend(&mut self);
                             self.window = None;
                         }
                     }
@@ -188,7 +186,7 @@ impl WindowBackend for WinitBackend {
                                     .build(_event_loop)
                                     .expect("failed to create window"),
                             );
-                            gfx_backend.resume(&mut self);
+                            user_app.resume(&mut self);
                         }
                         let framebuffer_size_physical = self
                             .window
@@ -200,6 +198,7 @@ impl WindowBackend for WinitBackend {
                             framebuffer_size_physical.width,
                             framebuffer_size_physical.height,
                         ];
+                        user_app.resize_framebuffer(&mut self);
                         self.scale = self
                             .window
                             .as_ref()
@@ -217,42 +216,41 @@ impl WindowBackend for WinitBackend {
                         };
                     }
                     event::Event::MainEventsCleared => {
-                        if let Some(window) = self.window.as_ref() {
-                            window.request_redraw()
+                        // no point in redrawing if we are suspended.
+                        if !suspended {
+                            if let Some(window) = self.window.as_ref() {
+                                window.request_redraw()
+                            }
                         }
                     }
+                    // assume single window, so no need to check window id.
                     event::Event::RedrawRequested(_) => {
                         if !suspended {
                             // take egui input
-                            let input = self.take_raw_input();
-                            // prepare surface for drawing
-                            gfx_backend.prepare_frame(self.latest_resize_event, &mut self);
-                            self.latest_resize_event = false;
+                            if self.latest_resize_event {
+                                user_app.resize_framebuffer(&mut self);
+                                self.latest_resize_event = false;
+                            }
                             // begin egui with input
-
+                            let logical_size = [
+                                self.framebuffer_size[0] as f32 / self.scale,
+                                self.framebuffer_size[1] as f32 / self.scale,
+                            ];
                             // run userapp gui function. let user do anything he wants with window or gfx backends
-                            let output =
-                                user_app.run(&egui_context, input, &mut self, &mut gfx_backend);
-
-                            // prepare egui render data for gfx backend
-                            let egui_gfx_data = EguiGfxData {
-                                meshes: egui_context.tessellate(output.shapes),
-                                textures_delta: output.textures_delta,
-                                screen_size_logical: [
-                                    self.framebuffer_size[0] as f32 / self.scale,
-                                    self.framebuffer_size[1] as f32 / self.scale,
-                                ],
-                            };
-                            // render egui with gfx backend
-                            gfx_backend.render(egui_gfx_data);
-                            // present the frame and loop back
-                            gfx_backend.present(&mut self);
+                            if let Some((_platform_output, timeout)) =
+                                user_app.run(logical_size, &mut self)
+                            {
+                                events_wait_duration = timeout;
+                            }
                         }
                     }
                     rest => self.handle_event(rest),
                 }
                 if self.should_close {
                     *control_flow = ControlFlow::Exit;
+                } else {
+                    control_flow.set_wait_timeout(events_wait_duration);
+                    events_wait_duration = std::time::Duration::ZERO;
                 }
             },
         )
@@ -268,6 +266,10 @@ impl WindowBackend for WinitBackend {
 
     fn get_proc_address(&mut self, _: &str) -> *const core::ffi::c_void {
         unimplemented!("winit backend doesn't support loading opengl function pointers")
+    }
+
+    fn get_raw_input(&mut self) -> RawInput {
+        self.take_raw_input()
     }
 }
 
@@ -371,7 +373,6 @@ impl WinitBackend {
                         touch.location.x as f32 / self.scale,
                         touch.location.y as f32 / self.scale,
                     );
-                    tracing::warn!("touch event: {} {}", touch.location.x, touch.location.y);
                     self.cursor_pos_logical = [pos.x, pos.y];
                     if self.pointer_touch_id.is_none() || self.pointer_touch_id.unwrap() == touch.id
                     {
