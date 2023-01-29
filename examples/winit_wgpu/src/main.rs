@@ -15,25 +15,7 @@ struct App {
 }
 
 impl EguiUserApp<WinitBackend> for App {
-    fn gui_run(&mut self, egui_context: &egui::Context, window_backend: &mut WinitBackend) {
-        for ev in window_backend.frame_events.iter() {
-            match ev {
-                egui_window_winit::winit::event::Event::WindowEvent { event, .. } => match event {
-                    egui_window_winit::winit::event::WindowEvent::Resized(s) => {
-                        println!("resized to {s:?}")
-                    }
-                    egui_window_winit::winit::event::WindowEvent::Moved(l) => {
-                        println!("moved to {l:?}")
-                    }
-                    egui_window_winit::winit::event::WindowEvent::ScaleFactorChanged {
-                        scale_factor,
-                        new_inner_size: _,
-                    } => println!("scale: {scale_factor}"),
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
+    fn gui_run(&mut self, egui_context: &egui::Context, _window_backend: &mut WinitBackend) {
         // draw a triangle
         self.draw_triangle();
         Window::new("egui user window").show(egui_context, |ui| {

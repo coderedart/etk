@@ -24,7 +24,7 @@ impl GfxBackend for ThreeDBackend {
         #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
         {
             use three_d::HasContext;
-            let supported_extension = (&glow_backend.glow_context).supported_extensions();
+            let supported_extension = (glow_backend.glow_context).supported_extensions();
 
             assert!(supported_extension.contains("EXT_color_buffer_float"));
 

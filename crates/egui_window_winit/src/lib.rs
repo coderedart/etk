@@ -11,7 +11,7 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 #[cfg(target_arch = "wasm32")]
-use winit::platform::web::{WindowBuilderExtWebSys, WindowExtWebSys};
+use winit::platform::web::WindowBuilderExtWebSys;
 
 /// config that you provide to winit backend
 #[derive(Debug)]
@@ -85,11 +85,9 @@ impl WindowBackend for WinitBackend {
         #[allow(unused_mut)]
         let mut window_builder = WindowBuilder::new()
             .with_resizable(true)
-            .with_title(&config.title);
+            .with_title(config.title);
         #[cfg(target_arch = "wasm32")]
         let window = {
-            use wasm_bindgen::JsCast;
-            use winit::platform::web::{WindowBuilderExtWebSys, WindowExtWebSys};
             let document = web_sys::window()
                 .expect("failed ot get websys window")
                 .document()
@@ -126,7 +124,7 @@ impl WindowBackend for WinitBackend {
         let raw_input = RawInput::default();
         Self {
             event_loop: Some(el),
-            window: window,
+            window,
             modifiers: Modifiers::default(),
             framebuffer_size,
             scale,

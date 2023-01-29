@@ -48,7 +48,7 @@ macro_rules! glow_error {
 /// ```
 ///
 /// we will only support WebGL2 for now. WebGL2 is available in 90+ % of all active devices according to <https://caniuse.com/?search=webgl2>.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WebGlConfig {
     pub alpha: Option<bool>,
     pub depth: Option<bool>,
@@ -64,21 +64,6 @@ pub struct WebGlConfig {
     pub fail_if_major_performance_caveat: Option<bool>,
     pub desynchronized: Option<bool>,
 }
-impl Default for WebGlConfig {
-    fn default() -> Self {
-        Self {
-            alpha: Default::default(),
-            depth: Default::default(),
-            stencil: Default::default(),
-            antialias: Default::default(),
-            premultiplied_alpha: Default::default(),
-            preserve_drawing_buffer: Default::default(),
-            low_power: Default::default(),
-            fail_if_major_performance_caveat: Default::default(),
-            desynchronized: Default::default(),
-        }
-    }
-}
 
 pub struct GlowBackend {
     pub glow_context: Arc<GlowContext>,
@@ -91,16 +76,9 @@ impl Drop for GlowBackend {
         unsafe { self.painter.destroy(&self.glow_context) };
     }
 }
-
+#[derive(Debug, Default)]
 pub struct GlowConfig {
     pub webgl_config: WebGlConfig,
-}
-impl Default for GlowConfig {
-    fn default() -> Self {
-        Self {
-            webgl_config: Default::default(),
-        }
-    }
 }
 // check srgb support??
 // and maybe enable debug support.
@@ -154,7 +132,7 @@ impl GfxBackend for GlowBackend {
             let canvas_node: wasm_bindgen::JsValue = web_sys::window()
                 .and_then(|win| win.document())
                 .and_then(|doc: web_sys::Document| {
-                    doc.query_selector(&format!("[data-raw-handle=\"{}\"]", handle_id))
+                    doc.query_selector(&format!("[data-raw-handle=\"{handle_id}\"]"))
                         .ok()
                 })
                 .expect("expected to find single canvas")
@@ -175,6 +153,7 @@ impl GfxBackend for GlowBackend {
 
             let gl_version = gl.version();
             info!("glow using gl version: {gl_version:?}");
+            #[cfg(not(target_arch = "wasm32"))]
             assert!(
                 gl_version.major >= 3,
                 "egui glow only supports opengl major version 3 or above {gl_version:?}"
@@ -344,7 +323,7 @@ impl Painter {
         unsafe {
             glow_error!(glow_context);
             // compile shaders
-            let egui_program = create_program_from_src(&glow_context, EGUI_VS, EGUI_FS);
+            let egui_program = create_program_from_src(glow_context, EGUI_VS, EGUI_FS);
             // shader verification
             glow_error!(glow_context);
             let u_screen_size = glow_context
@@ -356,9 +335,9 @@ impl Painter {
                 .expect("failed to find u_sampler");
             info!("location of uniform u_sampler is {u_sampler:?}");
             glow_context.use_program(Some(egui_program));
-            let (vao, vbo, ebo) = create_egui_vao_buffers(&glow_context, egui_program);
+            let (vao, vbo, ebo) = create_egui_vao_buffers(glow_context, egui_program);
             info!("created egui vao, vbo, ebo");
-            let (linear_sampler, nearest_sampler) = create_samplers(&glow_context);
+            let (linear_sampler, nearest_sampler) = create_samplers(glow_context);
             info!("created linear and nearest samplers");
             Self {
                 managed_textures: Default::default(),
@@ -377,6 +356,9 @@ impl Painter {
             }
         }
     }
+    /// uploads data to opengl buffers / textures
+    /// # Safety
+    /// make sure that there's no opengl issues and context is still current
     pub unsafe fn prepare_render(
         &mut self,
         glow_context: &glow::Context,
@@ -470,6 +452,8 @@ impl Painter {
             glow_error!(glow_context);
         }
     }
+    /// # Safety
+    /// uses a bunch of unsfae opengl functions, any of which might segfault.
     pub unsafe fn render_egui(&mut self, glow_context: &glow::Context) {
         let screen_size_physical = self.screen_size_physical;
         let screen_size_logical = self.logical_screen_size;
@@ -589,6 +573,9 @@ impl Painter {
         }
         glow_error!(glow_context);
     }
+    /// # Safety
+    /// This must be called only once.
+    /// must not use it again because this destroys all the opengl objects.
     pub unsafe fn destroy(&mut self, glow_context: &glow::Context) {
         glow_context.delete_sampler(self.linear_sampler);
         glow_context.delete_sampler(self.nearest_sampler);
@@ -620,7 +607,7 @@ unsafe fn create_program_from_src(
         warn!("vertex shader info log: {info_log}")
     }
     if !glow_context.get_shader_compile_status(vs) {
-        panic!("failed to compile vertex shader. info_log: {}", info_log);
+        panic!("failed to compile vertex shader. info_log: {info_log}");
     }
     glow_error!(glow_context);
     glow_context.compile_shader(fs);
@@ -629,7 +616,7 @@ unsafe fn create_program_from_src(
         warn!("fragment shader info log: {info_log}")
     }
     if !glow_context.get_shader_compile_status(fs) {
-        panic!("failed to compile fragment shader. info_log: {}", info_log);
+        panic!("failed to compile fragment shader. info_log: {info_log}");
     }
     glow_error!(glow_context);
 
@@ -644,7 +631,7 @@ unsafe fn create_program_from_src(
         warn!("egui program info log: {info_log}")
     }
     if !glow_context.get_program_link_status(egui_program) {
-        panic!("failed to link egui glow program. info_log: {}", info_log);
+        panic!("failed to link egui glow program. info_log: {info_log}");
     }
     glow_error!(glow_context);
     info!("egui shader program successfully compiled and linked");

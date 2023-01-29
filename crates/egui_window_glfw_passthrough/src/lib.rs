@@ -36,16 +36,17 @@ unsafe impl HasRawDisplayHandle for GlfwBackend {
         self.window.raw_display_handle()
     }
 }
-
+pub type GlfwCallback = Box<dyn FnOnce(&mut Glfw)>;
+pub type WindowCallback = Box<dyn FnOnce(&mut glfw::Window)>;
 /// The configuration struct for Glfw Backend
 ///
 #[derive(Default)]
 pub struct GlfwConfig {
     /// This callback is called with `&mut Glfw` just before creating a window
-    pub glfw_callback: Option<Box<dyn FnOnce(&mut Glfw)>>,
+    pub glfw_callback: Option<GlfwCallback>,
     /// This will be called right after window creation. you can use this to do things at startup like
     /// resizing, changing title, changing to fullscreen etc..
-    pub window_callback: Option<Box<dyn FnOnce(&mut glfw::Window)>>,
+    pub window_callback: Option<WindowCallback>,
 }
 impl WindowBackend for GlfwBackend {
     type Configuration = GlfwConfig;
@@ -85,14 +86,17 @@ impl WindowBackend for GlfwBackend {
         let scale = window.get_content_scale();
         let cursor_position = window.get_cursor_pos();
         let size_physical_pixels = [width as u32, height as u32];
-        let mut raw_input = RawInput::default();
         // set raw input screen rect details so that first frame
         // will have correct size even without any resize event
-        raw_input.screen_rect = Some(egui::Rect::from_points(&[
-            Default::default(),
-            [width as f32 / scale.0, height as f32 / scale.0].into(),
-        ]));
-        raw_input.pixels_per_point = Some(scale.0);
+
+        let raw_input = RawInput {
+            screen_rect: Some(egui::Rect::from_points(&[
+                Default::default(),
+                [width as f32 / scale.0, height as f32 / scale.0].into(),
+            ])),
+            pixels_per_point: Some(scale.0),
+            ..Default::default()
+        };
         Self {
             glfw: glfw_context,
             events_receiver,

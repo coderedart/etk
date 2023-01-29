@@ -91,14 +91,14 @@ impl SurfaceManager {
         device: &Device,
     ) {
         if let Some(surface) = self.surface.as_ref() {
-            let current_surface_image = surface.get_current_texture().unwrap_or_else(|e| {
+            let current_surface_image = surface.get_current_texture().unwrap_or_else(|_| {
                 let phy_fb_size = window_backend.get_live_physical_size_framebuffer().unwrap();
                 self.surface_config.width = phy_fb_size[0];
                 self.surface_config.height = phy_fb_size[1];
-                surface.configure(&device, &self.surface_config);
-                surface.get_current_texture().expect(&format!(
-                    "failed to get surface even after reconfiguration. {e}"
-                ))
+                surface.configure(device, &self.surface_config);
+                surface.get_current_texture().unwrap_or_else(|e| {
+                    panic!("failed to get surface even after reconfiguration. {e}")
+                })
             });
             let surface_view = current_surface_image
                 .texture
@@ -216,7 +216,7 @@ impl WgpuBackend {
         let adapter = Arc::new(
             instance
                 .request_adapter(&RequestAdapterOptions {
-                    power_preference: power_preference,
+                    power_preference,
                     force_fallback_adapter: false,
                     compatible_surface: surface.as_ref(),
                 })
@@ -525,7 +525,7 @@ impl EguiPainter {
             source: ShaderSource::Wgsl(EGUI_SHADER_SRC.into()),
         });
         // create pipeline using shaders + pipeline layout
-        let egui_pipeline = dev.create_render_pipeline(&RenderPipelineDescriptor {
+        dev.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("egui pipeline"),
             layout: Some(&egui_pipeline_layout),
             vertex: VertexState {
@@ -547,8 +547,7 @@ impl EguiPainter {
                 })],
             }),
             multiview: None,
-        });
-        egui_pipeline
+        })
     }
     pub fn new(dev: &Device, surface_format: TextureFormat) -> Self {
         // create uniform buffer for screen size
@@ -662,8 +661,7 @@ impl EguiPainter {
             let data_bytes: &[u8] = bytemuck::cast_slice(data_color32.as_slice());
             match tex_id {
                 egui::TextureId::Managed(tex_id) => {
-                    if let Some(_) = delta.pos {
-                    } else {
+                    if delta.pos.is_none() {
                         let mip_level_count = 1;
                         let new_texture = dev.create_texture(&TextureDescriptor {
                             label: None,
@@ -683,15 +681,15 @@ impl EguiPainter {
                                 origin: Origin3d::default(),
                                 aspect: TextureAspect::All,
                             },
-                            &data_bytes,
+                            data_bytes,
                             ImageDataLayout {
                                 offset: 0,
                                 bytes_per_row: Some(
-                                    NonZeroU32::new(size.width as u32 * 4)
+                                    NonZeroU32::new(size.width * 4)
                                         .expect("texture bytes per row is zero"),
                                 ),
                                 rows_per_image: Some(
-                                    NonZeroU32::new(size.height as u32)
+                                    NonZeroU32::new(size.height)
                                         .expect("texture rows count is zero"),
                                 ),
                             },

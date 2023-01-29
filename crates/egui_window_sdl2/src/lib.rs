@@ -5,6 +5,7 @@ use egui_backend::*;
 use egui_backend::{GfxApiType, WindowBackend};
 use sdl2::{keyboard::Scancode, video::Window, Sdl};
 
+pub use sdl2;
 pub struct Sdl2Backend {
     pub sdl_context: Sdl,
     pub event_pump: sdl2::EventPump,
@@ -20,13 +21,9 @@ pub struct Sdl2Backend {
     pub backend_config: BackendConfig,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SDL2Config {}
-impl Default for SDL2Config {
-    fn default() -> Self {
-        Self {}
-    }
-}
+
 impl WindowBackend for Sdl2Backend {
     type Configuration = SDL2Config;
 
@@ -37,7 +34,7 @@ impl WindowBackend for Sdl2Backend {
         let video_subsystem = sdl_context.video().unwrap();
 
         let mut window_builder = video_subsystem.window("rust-sdl2 demo", 800, 600);
-        match backend_config.gfx_api_type.clone() {
+        match backend_config.gfx_api_type {
             GfxApiType::GL => {
                 window_builder.opengl();
             }
@@ -57,7 +54,7 @@ impl WindowBackend for Sdl2Backend {
                     .expect("failed ot create opengl context"),
             );
             window
-                .gl_make_current(&gl_context.as_ref().unwrap())
+                .gl_make_current(gl_context.as_ref().unwrap())
                 .expect("failed to make gl context current");
         }
         let mouse_state = event_pump.relative_mouse_state();
@@ -114,9 +111,9 @@ impl WindowBackend for Sdl2Backend {
         Some(self.size_physical_pixels)
     }
 
-    fn run_event_loop<U: EguiUserApp<Self>>(mut self, mut user_app: U) {
+    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, mut user_app: U) {
         let mut events_wait_duration = std::time::Duration::ZERO;
-        while !self.should_close {
+        let callback = move || {
             // gather events
             self.tick(events_wait_duration);
             // prepare surface for drawing
@@ -143,6 +140,23 @@ impl WindowBackend for Sdl2Backend {
                 }
             } else {
                 events_wait_duration = std::time::Duration::ZERO
+            }
+            // on non emscripten targets (desktop), return a boolean indicating if event loop should close.
+            #[cfg(not(target_os = "emscripten"))]
+            self.should_close
+        };
+        // on emscripten, just keep calling forever i guess.
+        #[cfg(target_os = "emscripten")]
+        set_main_loop_callback(callback);
+
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let mut callback = callback;
+            loop {
+                // returns if loop should close.
+                if callback() {
+                    break;
+                }
             }
         }
     }
@@ -365,32 +379,20 @@ impl Sdl2Backend {
             }
             sdl2::event::Event::MouseButtonDown {
                 mouse_btn, x, y, ..
-            } => {
-                if let Some(pb) = sdl_to_egui_pointer_button(mouse_btn) {
-                    Some(Event::PointerButton {
-                        pos: [x as f32, y as f32].into(),
-                        button: pb,
-                        pressed: true,
-                        modifiers,
-                    })
-                } else {
-                    None
-                }
-            }
+            } => sdl_to_egui_pointer_button(mouse_btn).map(|pb| Event::PointerButton {
+                pos: [x as f32, y as f32].into(),
+                button: pb,
+                pressed: true,
+                modifiers,
+            }),
             sdl2::event::Event::MouseButtonUp {
                 mouse_btn, x, y, ..
-            } => {
-                if let Some(pb) = sdl_to_egui_pointer_button(mouse_btn) {
-                    Some(Event::PointerButton {
-                        pos: [x as f32, y as f32].into(),
-                        button: pb,
-                        pressed: false,
-                        modifiers,
-                    })
-                } else {
-                    None
-                }
-            }
+            } => sdl_to_egui_pointer_button(mouse_btn).map(|pb| Event::PointerButton {
+                pos: [x as f32, y as f32].into(),
+                button: pb,
+                pressed: false,
+                modifiers,
+            }),
             sdl2::event::Event::MouseWheel { x, y, .. } => {
                 Some(Event::Scroll([x as f32 * 25.0, y as f32 * 25.0].into()))
             }
@@ -511,5 +513,45 @@ fn sdl_to_egui_key(key: Scancode) -> Option<egui::Key> {
         Scancode::F19 => Some(Key::F19),
         Scancode::F20 => Some(Key::F20),
         _ => None,
+    }
+}
+
+#[allow(non_camel_case_types)]
+type em_callback_func = unsafe extern "C" fn();
+
+extern "C" {
+    // This extern is built in by Emscripten.
+    pub fn emscripten_run_script_int(x: *const std::ffi::c_uchar) -> std::ffi::c_int;
+    pub fn emscripten_cancel_main_loop();
+    pub fn emscripten_set_main_loop(
+        func: em_callback_func,
+        fps: std::ffi::c_int,
+        simulate_infinite_loop: std::ffi::c_int,
+    );
+}
+
+thread_local!(static MAIN_LOOP_CALLBACK: std::cell::RefCell<Option<Box<dyn FnMut()>>>  = std::cell::RefCell::new(None));
+
+pub fn set_main_loop_callback<F: 'static>(callback: F)
+where
+    F: FnMut(),
+{
+    MAIN_LOOP_CALLBACK.with(|log| {
+        *log.borrow_mut() = Some(Box::new(callback));
+    });
+
+    unsafe {
+        emscripten_set_main_loop(wrapper::<F>, 0, 1);
+    }
+
+    extern "C" fn wrapper<F>()
+    where
+        F: FnMut(),
+    {
+        MAIN_LOOP_CALLBACK.with(|z| {
+            if let Some(ref mut callback) = *z.borrow_mut() {
+                callback();
+            }
+        });
     }
 }

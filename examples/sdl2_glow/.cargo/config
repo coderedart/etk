@@ -1,0 +1,15 @@
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    # for linking sdl2
+    "-C",
+    "link-arg=-s",
+    "-C",
+    "link-arg=USE_SDL=2",
+    # i don't even remember why i added this
+    "-C",
+    "link-arg=-s",
+    "-C",
+    "link-arg=DISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=1",
+
+
+]

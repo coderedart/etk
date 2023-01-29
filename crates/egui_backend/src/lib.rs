@@ -159,48 +159,7 @@ pub trait GfxBackend {
     fn resize_framebuffer(&mut self, window_backend: &mut impl WindowBackend);
 }
 
-/// This is the trait most users care about. just implement this trait and you can use any `WindowBackend` or `GfxBackend` to run your egui app.
-///
-/// if you don't particular care about the window or gfx backends used to run your app, you can just use a generic impl
-/// ```rust
-/// pub struct App;
-/// impl<WB: WindowBackend, GB: GfxBackend> UserApp<WB, GB> for App {
-///     fn run(&mut self, egui_context: &egui::Context, raw_input: egui::RawInput, window_backend: &mut impl WB, gfx_backend: &mut GB, logical_size: [f32; 2]) {
-///         egui_context.begin_frame(raw_input); // use input to begin frame and then run your gui code
-///         Window::new("egui user window").show(egui_context, |ui| {
-///                ui.label("hello");
-///         });
-///         // take egui full output after ending frame
-///         let egui::FullOutput {
-///             platform_output,
-///             repaint_after,
-///             textures_delta,
-///             shapes,
-///         } = egui_context.end_frame();
-///         // send egui data to renderer.
-///         gfx_backend.render(EguiGfxData {
-///             meshes: egui_context.tessellate(shapes),
-///             textures_delta,
-///             screen_size_logical,
-///         });
-///         // present the rendered surface.
-///         gfx_backend.present(window_backend);
-///         // return the platform output (window backend will set the cursor etc.. using this)
-///         // and repaint_after which is the max duration we will wait for events before calling this function again.
-///         (platform_output, repaint_after)
-///     }    
-/// }
-/// ```
-///
-/// if you want to use functionality from a particular Backend like drawing with wgpu, use specific generic types on your impl.
-/// ```rust
-/// pub struct App;
-/// impl UserApp<WinitBackend, WgpuBackend> for App {
-///     fn run(&mut self, egui_context: &egui::Context, raw_input: egui::RawInput, window_backend: &mut WinitBackend, gfx_backend: &mut impl WgpuBackend, logical_size: [f32; 2]) {
-///         /* do something with winit or wgpu */
-///     }    
-/// }
-/// ```
+/// This is the trait most users care about. we already have a bunch of default implementations. override them for more advanced usage.
 pub trait EguiUserApp<WB: WindowBackend> {
     type UserGfxBackend: GfxBackend;
 
@@ -241,43 +200,9 @@ pub trait EguiUserApp<WB: WindowBackend> {
             self.get_gfx_backend().present(window_backend);
             return Some((platform_output, repaint_after));
         }
-        return None;
+        None
     }
     /// This is the only function user needs to implement. this function will be called every frame.
-    /// user MUST
-    /// 1. use raw input for egui context's begin frame.
-    /// 2. call gfx backend's render -> present methods in that order.
-    /// 3. return platform output and repaint_after data from the full output struct.
-    ///
-    /// example:
-    /// ```rust
-    /// egui_context.begin_frame(raw_input); // use input to begin frame and then run your gui code
-    /// Window::new("egui user window").show(egui_context, |ui| {
-    ///        ui.label("hello");
-    /// });
-    /// // take egui full output after ending frame
-    /// let egui::FullOutput {
-    ///     platform_output,
-    ///     repaint_after,
-    ///     textures_delta,
-    ///     shapes,
-    /// } = egui_context.end_frame();
-    /// // send egui data to renderer.
-    /// gfx_backend.render(EguiGfxData {
-    ///     meshes: egui_context.tessellate(shapes),
-    ///     textures_delta,
-    ///     screen_size_logical,
-    /// });
-    /// // present the rendered surface.
-    /// gfx_backend.present(window_backend);
-    /// // return the platform output (window backend will set the cursor etc.. using this)
-    /// // and repaint_after which is the max duration we will wait for events before calling this function again.
-    /// (platform_output, repaint_after)
-    /// ```
-    /// you can use the rawinput to get events like cursor movement, button presses/releases, keyboard key press/releases, window resize events etc.
-    /// and you can filter them out too. like only restricting egui to left half of your window by modifying the resize event before starting egui context.
-    /// you can use the fulloutput to add accesskit or other useful features.
-    /// you can modify platform output for a particular cursor or opening a url etc.. before returning them
     fn gui_run(&mut self, egui_context: &egui::Context, window_backend: &mut WB);
 }
 
