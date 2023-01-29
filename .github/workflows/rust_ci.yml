@@ -15,9 +15,11 @@ jobs:
         with:
           profile: minimal
           toolchain: stable
-          target: wasm32-unknown-unknown, x86_64-unknown-linux-gnu, wasm32-unknown-emscripten
           override: true
 
+      - name: Install wasm32 targets
+        run: rustup add wasm32-unknown-unknown && rustup add wasm32-unknown-emscripten
+        
       - name: Rust Cache
         uses: Swatinem/rust-cache@v1
 
@@ -26,7 +28,7 @@ jobs:
 
       - name: check.sh
         run: ./check.sh
-        
+
       - name: Install checkmate
         run: cargo install cargo-checkmate
 
