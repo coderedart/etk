@@ -1,6 +1,5 @@
 on: [push, pull_request]
-
-name: checkmate
+name: check everything
 
 jobs:
   cargo-checkmate:
@@ -10,7 +9,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         
-      - name: setup emsdk (emscripten)
+      - name: Setup emsdk 
       - uses: mymindstorm/setup-emsdk@v11 # setup emscripten toolchain
 
       - name: Install Rust toolchain
