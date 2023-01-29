@@ -31,8 +31,4 @@ jobs:
       - name: check.sh
         run: ./check.sh
 
-      - name: Install checkmate
-        run: cargo install cargo-checkmate
 
-      - name: Run checkmate
-        run: cargo-checkmate
