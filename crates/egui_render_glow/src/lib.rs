@@ -682,24 +682,22 @@ unsafe fn create_egui_vao_buffers(
     let location = glow_context
         .get_attrib_location(program, "vin_pos")
         .expect("failed to get vin_pos location");
-    assert_eq!(location, 0, "vin_pos");
     info!("vin_pos vertex attribute location is {location}");
     glow_context.enable_vertex_attrib_array(location);
     glow_context.vertex_attrib_pointer_f32(location, 2, glow::FLOAT, false, 20, 0);
     let location = glow_context
         .get_attrib_location(program, "vin_tc")
         .expect("failed to get vin_tc location");
-    assert_eq!(location, 1, "vin_tc");
     info!("vin_tc vertex attribute location is {location}");
     glow_context.enable_vertex_attrib_array(location);
     glow_context.vertex_attrib_pointer_f32(location, 2, glow::FLOAT, false, 20, 8);
     let location = glow_context
         .get_attrib_location(program, "vin_sc")
         .expect("failed to get vin_sc location");
-    assert_eq!(location, 2, "vin_sc");
     info!("vin_sc vertex attribute location is {location}");
     glow_context.enable_vertex_attrib_array(location);
     glow_context.vertex_attrib_pointer_f32(location, 4, glow::UNSIGNED_BYTE, false, 20, 16);
+    
     glow_error!(glow_context);
     (vao, vbo, ebo)
 }
