@@ -52,7 +52,7 @@ pub struct SurfaceManager {
     /// if we find one, we will set surface configuration to that format.
     /// if we don't find one, we will just use the first surface format support.
     /// so, if you don't care about the surface format, just set this to an empty vector.
-    pub surface_formats_priority: Vec<TextureFormat>,
+    surface_formats_priority: Vec<TextureFormat>,
 }
 pub struct WgpuConfig {
     pub backends: Backends,
@@ -85,6 +85,25 @@ impl Default for WgpuConfig {
     }
 }
 impl SurfaceManager {
+    pub fn new(
+        window_backend: &mut impl WindowBackend,
+        instance: &Instance,
+        adapter: &Adapter,
+        device: &Device,
+        surface: Option<Surface>,
+        surface_formats_priority: Vec<TextureFormat>,
+        surface_config: SurfaceConfiguration,
+    ) -> Self {
+        let mut surface_manager = Self {
+            surface_view: None,
+            surface_current_image: None,
+            surface,
+            surface_config,
+            surface_formats_priority,
+        };
+        surface_manager.reconfigure_surface(window_backend, instance, adapter, device);
+        surface_manager
+    }
     fn create_current_surface_texture_view(
         &mut self,
         window_backend: &mut impl WindowBackend,
@@ -115,6 +134,10 @@ impl SurfaceManager {
 
             self.surface_view = Some(surface_view);
             self.surface_current_image = Some(current_surface_image);
+        } else {
+            tracing::warn!(
+                "skipping acquiring the currnet surface image because there's no surface"
+            );
         }
     }
     /// This basically checks if the surface needs creating. and then if needed, creates surface if window exists.
@@ -127,22 +150,20 @@ impl SurfaceManager {
         adapter: &Adapter,
         device: &Device,
     ) {
-        if self.surface.is_some() {
-            return;
-        }
         if let Some(window) = window_backend.get_window() {
-            self.surface = Some(unsafe {
-                instance
-                    .create_surface(window)
-                    .expect("failed to create surface")
-            });
+            if self.surface.is_none() {
+                self.surface = Some(unsafe {
+                    instance
+                        .create_surface(window)
+                        .expect("failed to create surface")
+                });
+            }
 
-            let supported_formats = self
-                .surface
-                .as_ref()
-                .unwrap()
-                .get_capabilities(adapter)
-                .formats;
+            let capabilities = self.surface.as_ref().unwrap().get_capabilities(adapter);
+            let supported_formats = capabilities.formats;
+            for alpha_mode in capabilities.alpha_modes {
+                debug!("supported alpha modes: {alpha_mode:#?}");
+            }
             debug!("supported formats of the surface: {supported_formats:#?}");
 
             let mut compatible_format_found = false;
@@ -156,15 +177,19 @@ impl SurfaceManager {
                 }
             }
             if !compatible_format_found {
-                tracing::error!("could not find compatible surface format from user provided formats. using the first supported format instead");
-                self.surface_config.format = supported_formats
+                tracing::error!("could not find compatible surface format from user provided formats.");
+                self.surface_config.format = supported_formats.iter().find(|f| f.describe().srgb).copied().unwrap_or_else(|| {
+                    supported_formats
                     .first()
                     .copied()
-                    .expect("surface has zero supported texture formats");
+                    .expect("surface has zero supported texture formats")
+                })
             }
+            debug!("using format: {:#?} for surface configuration", self.surface_config.format);
             self.resize_framebuffer(device, window_backend);
         }
     }
+
     fn resize_framebuffer(&mut self, device: &Device, window_backend: &mut impl WindowBackend) {
         if let Some(size) = window_backend.get_live_physical_size_framebuffer() {
             self.surface_config.width = size[0];
@@ -232,18 +257,16 @@ impl WgpuBackend {
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
-        let mut surface_manager = SurfaceManager {
-            surface_view: None,
-            surface_current_image: None,
+
+        let surface_manager = SurfaceManager::new(
+            window_backend,
+            &instance,
+            &adapter,
+            &device,
             surface,
-            surface_config,
             surface_formats_priority,
-        };
-        if let Some(framebuffer_size) = window_backend.get_live_physical_size_framebuffer() {
-            surface_manager.surface_config.width = framebuffer_size[0];
-            surface_manager.surface_config.height = framebuffer_size[1];
-            surface_manager.reconfigure_surface(window_backend, &instance, &adapter, &device);
-        }
+            surface_config,
+        );
 
         debug!("device features: {:#?}", device.features());
         debug!("device limits: {:#?}", device.limits());
@@ -330,6 +353,7 @@ impl GfxBackend for WgpuBackend {
     }
 
     fn present(&mut self, _window_backend: &mut impl WindowBackend) {
+        assert!(self.surface_manager.surface_view.is_some());
         self.queue.submit(
             std::mem::take(&mut self.command_encoders)
                 .into_iter()
@@ -392,17 +416,17 @@ pub struct EguiPainter {
     /// bind group for the Uniform buffer using layout entry `SCREEN_SIZE_UNIFORM_BUFFER_BINDGROUP_ENTRY`
     screen_size_bind_group: BindGroup,
     /// this layout is reused by all egui textures.
-    texture_bindgroup_layout: BindGroupLayout,
+    pub texture_bindgroup_layout: BindGroupLayout,
     /// used by pipeline create function
-    screen_size_bindgroup_layout: BindGroupLayout,
+    pub screen_size_bindgroup_layout: BindGroupLayout,
     /// used to check if this matches the new surface after resume event. otherwise, recompile render pipeline
     surface_format: TextureFormat,
     /// egui render pipeline
     pipeline: RenderPipeline,
     /// linear sampler for egui textures that need to create bindgroups
-    linear_sampler: Sampler,
+    pub linear_sampler: Sampler,
     /// nearest sampler for egui textures (especially font texture) that need to create bindgroups for binding to egui pipelien
-    nearest_sampler: Sampler,
+    pub nearest_sampler: Sampler,
 
     /// these are textures uploaded by egui. intmap is much faster than btree or hashmaps.
     /// maybe we can use a proper struct instead of tuple?
@@ -509,9 +533,10 @@ impl EguiPainter {
         screen_size_bindgroup_layout: &BindGroupLayout,
         texture_bindgroup_layout: &BindGroupLayout,
     ) -> RenderPipeline {
+        let srgb = pipeline_surface_format.describe().srgb;
         assert!(
-            pipeline_surface_format.describe().srgb,
-            "egui wgpu only supports srgb compatible framebuffer"
+            srgb,
+            "egui wgpu only supports srgb compatible framebuffer: {pipeline_surface_format:#?}"
         );
         // pipeline layout. screensize uniform buffer for vertex shader + texture and sampler for fragment shader
         let egui_pipeline_layout = dev.create_pipeline_layout(&PipelineLayoutDescriptor {

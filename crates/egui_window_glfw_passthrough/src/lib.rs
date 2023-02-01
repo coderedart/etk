@@ -8,7 +8,6 @@ use glfw::Glfw;
 use glfw::StandardCursor;
 use glfw::WindowEvent;
 use glfw::WindowHint;
-use raw_window_handle::*;
 use std::sync::mpsc::Receiver;
 
 pub struct GlfwBackend {
@@ -26,16 +25,6 @@ pub struct GlfwBackend {
     pub cursor_inside_bounds: bool,
 }
 
-unsafe impl HasRawWindowHandle for GlfwBackend {
-    fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
-        self.window.raw_window_handle()
-    }
-}
-unsafe impl HasRawDisplayHandle for GlfwBackend {
-    fn raw_display_handle(&self) -> raw_window_handle::RawDisplayHandle {
-        self.window.raw_display_handle()
-    }
-}
 pub type GlfwCallback = Box<dyn FnOnce(&mut Glfw)>;
 pub type WindowCallback = Box<dyn FnOnce(&mut glfw::Window)>;
 /// The configuration struct for Glfw Backend
@@ -50,8 +39,8 @@ pub struct GlfwConfig {
 }
 impl WindowBackend for GlfwBackend {
     type Configuration = GlfwConfig;
-
     type WindowType = glfw::Window;
+    
     fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
@@ -126,6 +115,10 @@ impl WindowBackend for GlfwBackend {
         Some(self.framebuffer_size_physical)
     }
 
+    fn get_raw_input(&mut self) -> RawInput {
+        self.take_raw_input()
+    }
+
     fn run_event_loop<U: EguiUserApp<Self>>(mut self, mut user_app: U) {
         let mut wait_events_duration = std::time::Duration::ZERO;
         while !self.window.should_close() {
@@ -165,10 +158,6 @@ impl WindowBackend for GlfwBackend {
 
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
         self.window.get_proc_address(symbol)
-    }
-
-    fn get_raw_input(&mut self) -> RawInput {
-        self.take_raw_input()
     }
 }
 

@@ -1,14 +1,17 @@
 use egui::TextureId;
 use egui_backend::{egui::TexturesDelta, *};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use bytemuck::cast_slice;
 
 use intmap::IntMap;
+#[cfg(not(target_arch = "wasm32"))]
 const EGUI_VS: &str = include_str!("../../../shaders/egui.vert");
-#[cfg(not(target = "wasm32-unknown-unknown"))]
+#[cfg(not(target_arch = "wasm32"))]
 const EGUI_FS: &str = include_str!("../../../shaders/egui.frag");
-#[cfg(target = "wasm32-unknown-unknown")]
+#[cfg(target_arch = "wasm32")]
+const EGUI_VS: &str = include_str!("../../../shaders/egui_webgl.vert");
+#[cfg(target_arch = "wasm32")]
 const EGUI_FS: &str = include_str!("../../../shaders/egui_webgl.frag");
 
 use std::sync::Arc;
@@ -150,8 +153,9 @@ impl GfxBackend for GlowBackend {
         #[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
         let glow_context = unsafe {
             let gl = glow::Context::from_loader_function(|s| window_backend.get_proc_address(s));
-
+            glow_error!(gl);
             let gl_version = gl.version();
+            glow_error!(gl);
             info!("glow using gl version: {gl_version:?}");
             #[cfg(not(target_arch = "wasm32"))]
             assert!(
@@ -162,6 +166,7 @@ impl GfxBackend for GlowBackend {
             gl
         };
         let glow_context: Arc<glow::Context> = Arc::new(glow_context);
+
         if glow_context.supported_extensions().contains("EXT_sRGB")
             || glow_context.supported_extensions().contains("GL_EXT_sRGB")
             || glow_context
@@ -171,6 +176,9 @@ impl GfxBackend for GlowBackend {
             warn!("srgb support detected by egui glow");
         } else {
             warn!("no srgb support detected by egui glow");
+        }
+        unsafe {
+            glow_error!(glow_context);
         }
 
         let painter = Painter::new(&glow_context);
@@ -463,7 +471,7 @@ impl Painter {
         glow_context.enable(glow::SCISSOR_TEST);
         glow_context.disable(glow::DEPTH_TEST);
         glow_error!(glow_context);
-        #[cfg(not(target = "wasm32-unknown-unknown"))]
+        #[cfg(not(target_arch = "wasm32"))]
         glow_context.enable(glow::FRAMEBUFFER_SRGB);
 
         glow_error!(glow_context);
@@ -593,6 +601,10 @@ unsafe fn create_program_from_src(
     vertex_src: &str,
     frag_src: &str,
 ) -> Program {
+    tracing::info!(
+        "creating shaders. supported shader versions: {}",
+        &glow_context.get_parameter_string(glow::SHADING_LANGUAGE_VERSION)
+    );
     let vs = glow_context
         .create_shader(glow::VERTEX_SHADER)
         .expect("shader creation failed");
@@ -693,6 +705,7 @@ unsafe fn create_egui_vao_buffers(
 }
 
 unsafe fn create_samplers(glow_context: &glow::Context) -> (Sampler, Sampler) {
+    debug!("creating samplers");
     let nearest_sampler = glow_context
         .create_sampler()
         .expect("failed to create nearest sampler");

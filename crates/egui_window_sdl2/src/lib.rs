@@ -106,7 +106,6 @@ impl WindowBackend for Sdl2Backend {
 
     fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]> {
         let size = self.window.drawable_size();
-
         self.size_physical_pixels = [size.0, size.1];
         Some(self.size_physical_pixels)
     }

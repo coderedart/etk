@@ -2,32 +2,39 @@
 
 ### Emscripten 
 you will need to add this link flags to your build process.
-
+I just put all of them here, but choose what you need.
 ```toml
 # inside .cargo/config.toml
 [target.wasm32-unknown-emscripten]
 rustflags = [
-    # for linking sdl2
     "-C",
     "link-arg=-s",
     "-C",
-    "link-arg=USE_SDL=2",
-    # for linking sdl2 gfx
+    "link-arg=USE_GLFW=3", # for glfw support. 
     "-C",
     "link-arg=-s",
     "-C",
-    "link-arg=USE_SDL_GFX=2",
-    # for linking sdl2 ttf support. 
+    "link-arg=FULL_ES2",# for opengl es 2 emulation
     "-C",
     "link-arg=-s",
     "-C",
-    "link-arg=USE_SDL_TTF=2",
-    # i don't even remember why i added this
+    "link-arg=FULL_ES3", # for opengl es 3 emulation
     "-C",
     "link-arg=-s",
     "-C",
-    "link-arg=DISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=1",
-
+    "link-arg=USE_SDL=2", # for sdl2. 
+    "-C",
+    "link-arg=-s",
+    "-C",
+    "link-arg=MAX_WEBGL_VERSION=2 ", # to make sure that webgl2 is enabled. 
+    "-C",
+    "link-arg=-s",
+    "-C",
+    "link-arg=MIN_WEBGL_VERSION=2", # to disable webgl1 completely, and use webgl2 exclusively. 
+    "-C",
+    "link-arg=-s",
+    "-C",
+    "link-arg=DISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=1", # i don't even remember why i have this :D.
 ]
 ```
 on emscripten target, sdl2 crate will set raw window handle id to `1` by hardcoding it. reference: https://github.com/Rust-SDL2/rust-sdl2/blob/master/src/sdl2/raw_window_handle.rs#L18
@@ -74,8 +81,8 @@ echo "launching server using python http.server on http://127.0.0.1:8000/"
 (cd dist && python -m http.server --bind 127.0.0.1)
 ```
 
-this is basically the setup needed for emscripten. you just need to setup everything in the main function and finally prepare a closure that will be called by main loop.
-use the `set_main_loop_callback` function shown below, to call that static closure every frame. 
+this is basically the setup needed for emscripten. use the `set_main_loop_callback` function shown below, to call that static closure every frame. 
+THIS IS DONE AUTOMATICALLY inside sdl2's `run_event_loop` function. I am just pasting this here for completion.
 
 example main.rs:
 ```rust
