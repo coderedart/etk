@@ -40,7 +40,7 @@ pub struct GlfwConfig {
 impl WindowBackend for GlfwBackend {
     type Configuration = GlfwConfig;
     type WindowType = glfw::Window;
-    
+
     fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");

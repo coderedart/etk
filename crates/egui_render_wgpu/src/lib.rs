@@ -177,15 +177,24 @@ impl SurfaceManager {
                 }
             }
             if !compatible_format_found {
-                tracing::error!("could not find compatible surface format from user provided formats.");
-                self.surface_config.format = supported_formats.iter().find(|f| f.describe().srgb).copied().unwrap_or_else(|| {
-                    supported_formats
-                    .first()
+                tracing::error!(
+                    "could not find compatible surface format from user provided formats."
+                );
+                self.surface_config.format = supported_formats
+                    .iter()
+                    .find(|f| f.describe().srgb)
                     .copied()
-                    .expect("surface has zero supported texture formats")
-                })
+                    .unwrap_or_else(|| {
+                        supported_formats
+                            .first()
+                            .copied()
+                            .expect("surface has zero supported texture formats")
+                    })
             }
-            debug!("using format: {:#?} for surface configuration", self.surface_config.format);
+            debug!(
+                "using format: {:#?} for surface configuration",
+                self.surface_config.format
+            );
             self.resize_framebuffer(device, window_backend);
         }
     }
