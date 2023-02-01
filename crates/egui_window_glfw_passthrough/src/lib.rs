@@ -46,6 +46,8 @@ impl WindowBackend for GlfwBackend {
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
 
         // set hints based on gfx api config
+        // emscripten doesn't have window hint string method. but window_hint fn actually uses it, so we will trigger link error.
+        #[cfg(not(target_os = "emscripten"))]
         match &backend_config.gfx_api_type {
             GfxApiType::GL => {
                 glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::OpenGl));
@@ -64,20 +66,43 @@ impl WindowBackend for GlfwBackend {
         if let GfxApiType::GL = backend_config.gfx_api_type {
             window.make_current();
         }
+        let should_poll = true;
         // set which events you care about
-        window.set_all_polling(true);
-        window.set_store_lock_key_mods(true);
+        window.set_pos_polling(should_poll);
+        window.set_size_polling(should_poll);
+        window.set_close_polling(should_poll);
+        window.set_refresh_polling(should_poll);
+        window.set_focus_polling(should_poll);
+        window.set_iconify_polling(should_poll);
+        window.set_framebuffer_size_polling(should_poll);
+        window.set_key_polling(should_poll);
+        window.set_char_polling(should_poll);
+        window.set_mouse_button_polling(should_poll);
+        window.set_cursor_pos_polling(should_poll);
+        window.set_cursor_enter_polling(should_poll);
+        window.set_scroll_polling(should_poll);
+        window.set_drag_and_drop_polling(should_poll);
+        #[cfg(not(target_os = "emscripten"))]
+        let scale = {
+            // emscripten doesn't have support for these
+            window.set_char_mods_polling(should_poll);
+            window.set_maximize_polling(should_poll);
+            window.set_content_scale_polling(should_poll);
+            window.set_store_lock_key_mods(true);
+            window.get_content_scale()
+        };
+        #[cfg(target_os = "emscripten")]
+        let scale = (1.0f32, 1.0f32); // maybe check framebuffer size vs window size to calculate scale?
+
         if let Some(window_callback) = config.window_callback {
             window_callback(&mut window);
         }
         // collect details and keep them updated
         let (width, height) = window.get_framebuffer_size();
-        let scale = window.get_content_scale();
         let cursor_position = window.get_cursor_pos();
         let size_physical_pixels = [width as u32, height as u32];
         // set raw input screen rect details so that first frame
         // will have correct size even without any resize event
-
         let raw_input = RawInput {
             screen_rect: Some(egui::Rect::from_points(&[
                 Default::default(),
@@ -119,9 +144,9 @@ impl WindowBackend for GlfwBackend {
         self.take_raw_input()
     }
 
-    fn run_event_loop<U: EguiUserApp<Self>>(mut self, mut user_app: U) {
+    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, mut user_app: U) {
         let mut wait_events_duration = std::time::Duration::ZERO;
-        while !self.window.should_close() {
+        let callback = move || {
             self.glfw
                 .wait_events_timeout(wait_events_duration.as_secs_f64());
             // gather events
@@ -144,6 +169,22 @@ impl WindowBackend for GlfwBackend {
                 self.set_cursor(platform_output.cursor_icon);
             } else {
                 wait_events_duration = std::time::Duration::ZERO;
+            }
+            #[cfg(not(target_os = "emscripten"))]
+            self.window.should_close()
+        };
+        // on emscripten, just keep calling forever i guess.
+        #[cfg(target_os = "emscripten")]
+        set_main_loop_callback(callback);
+
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let mut callback = callback;
+            loop {
+                // returns if loop should close.
+                if callback() {
+                    break;
+                }
             }
         }
     }
@@ -265,6 +306,7 @@ impl GlfwBackend {
                 }
                 WindowEvent::CursorEnter(c) => {
                     self.cursor_inside_bounds = c;
+                    #[cfg(not(target_os = "emscripten"))]
                     if c {
                         None
                     } else if !self.window.is_mouse_passthrough() {
@@ -275,6 +317,8 @@ impl GlfwBackend {
                         // because the pointer might still be within bounds even if we get cursor left event due to window losing focus due to passthrough
                         None
                     }
+                    #[cfg(target_os = "emscripten")]
+                    None
                 }
                 _rest => None,
             } {
@@ -286,6 +330,7 @@ impl GlfwBackend {
         let cursor_position = [cursor_position.0 as f32, cursor_position.1 as f32];
 
         // when there's no cursor event and window is passthrough, then, simulate mouse events
+        #[cfg(not(target_os = "emscripten"))]
         if !cursor_event && self.window.is_mouse_passthrough() {
             let window_bounds = egui_backend::egui::Rect::from_two_pos(
                 Default::default(),
@@ -432,5 +477,45 @@ pub fn egui_to_glfw_cursor(cursor: egui::CursorIcon) -> glfw::StandardCursor {
         | egui::CursorIcon::ResizeSouth
         | egui::CursorIcon::ResizeVertical => StandardCursor::VResize,
         _ => StandardCursor::Arrow,
+    }
+}
+
+#[allow(non_camel_case_types)]
+type em_callback_func = unsafe extern "C" fn();
+
+extern "C" {
+    // This extern is built in by Emscripten.
+    pub fn emscripten_run_script_int(x: *const std::ffi::c_uchar) -> std::ffi::c_int;
+    pub fn emscripten_cancel_main_loop();
+    pub fn emscripten_set_main_loop(
+        func: em_callback_func,
+        fps: std::ffi::c_int,
+        simulate_infinite_loop: std::ffi::c_int,
+    );
+}
+
+thread_local!(static MAIN_LOOP_CALLBACK: std::cell::RefCell<Option<Box<dyn FnMut()>>>  = std::cell::RefCell::new(None));
+
+pub fn set_main_loop_callback<F: 'static>(callback: F)
+where
+    F: FnMut(),
+{
+    MAIN_LOOP_CALLBACK.with(|log| {
+        *log.borrow_mut() = Some(Box::new(callback));
+    });
+
+    unsafe {
+        emscripten_set_main_loop(wrapper::<F>, 0, 1);
+    }
+
+    extern "C" fn wrapper<F>()
+    where
+        F: FnMut(),
+    {
+        MAIN_LOOP_CALLBACK.with(|z| {
+            if let Some(ref mut callback) = *z.borrow_mut() {
+                callback();
+            }
+        });
     }
 }

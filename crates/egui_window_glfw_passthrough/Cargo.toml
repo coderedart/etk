@@ -4,8 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["glfw_sys"]
+all = ["glfw_sys", "vulkan", "wayland", "log", "image"]
+glfw_sys = ["glfw/glfw-sys-passthrough"]
+vulkan = ["glfw/vulkan"]
+wayland = ["glfw/wayland"]
+log = ["glfw/log"]
+image = ["glfw/image"]
+
 
 [dependencies]
 egui_backend = { version = "*", path = "../egui_backend" }
-glfw = { version = "0.49", package = "glfw-passthrough" }
+glfw = { version = "0.50.0", package = "glfw-passthrough" , default-features = false}
 tracing = { version = "0.1" }
