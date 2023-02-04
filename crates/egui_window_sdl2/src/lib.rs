@@ -110,25 +110,27 @@ impl WindowBackend for Sdl2Backend {
         Some(self.size_physical_pixels)
     }
 
-    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, mut user_app: U) {
+    fn run_event_loop<U: EguiUserApp<Self> + 'static>(self, user_app: U) {
+        let mut tuple = (self, user_app);
         let mut events_wait_duration = std::time::Duration::ZERO;
         let callback = move || {
+            let (window_backend, user_app) = &mut tuple;
             // gather events
-            self.tick(events_wait_duration);
+            window_backend.tick(events_wait_duration);
             // prepare surface for drawing
-            if self.latest_resize_event {
-                user_app.resize_framebuffer(&mut self);
-                self.latest_resize_event = false;
+            if window_backend.latest_resize_event {
+                user_app.resize_framebuffer(window_backend);
+                window_backend.latest_resize_event = false;
             }
             // run userapp gui function. let user do anything he wants with window or gfx backends
             let logical_size = [
-                self.size_physical_pixels[0] as f32 / self.scale[0],
-                self.size_physical_pixels[1] as f32 / self.scale[1],
+                window_backend.size_physical_pixels[0] as f32 / window_backend.scale[0],
+                window_backend.size_physical_pixels[1] as f32 / window_backend.scale[1],
             ];
-            if let Some((platform_output, timeout)) = user_app.run(logical_size, &mut self) {
+            if let Some((platform_output, timeout)) = user_app.run(logical_size, window_backend) {
                 events_wait_duration = timeout;
                 if !platform_output.copied_text.is_empty() {
-                    if let Err(err) = self
+                    if let Err(err) = window_backend
                         .window
                         .subsystem()
                         .clipboard()
@@ -142,7 +144,7 @@ impl WindowBackend for Sdl2Backend {
             }
             // on non emscripten targets (desktop), return a boolean indicating if event loop should close.
             #[cfg(not(target_os = "emscripten"))]
-            self.should_close
+            window_backend.should_close
         };
         // on emscripten, just keep calling forever i guess.
         #[cfg(target_os = "emscripten")]

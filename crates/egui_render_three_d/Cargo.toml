@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 egui_backend = { path = "../egui_backend" }
 egui_render_glow = { path = "../egui_render_glow" }
-three-d = { version = "*", default-features = false}
+three-d = { version = "0.14.0", default-features = false}

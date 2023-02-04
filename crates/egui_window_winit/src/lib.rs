@@ -68,7 +68,11 @@ pub struct WinitBackend {
     pub backend_config: BackendConfig,
     pub window_builder: WindowBuilder,
 }
-
+impl Drop for WinitBackend {
+    fn drop(&mut self) {
+        tracing::warn!("winit backend is being dropped");
+    }
+}
 impl WindowBackend for WinitBackend {
     type Configuration = WinitConfig;
     type WindowType = winit::window::Window;
@@ -156,102 +160,104 @@ impl WindowBackend for WinitBackend {
         }
     }
 
-    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, mut user_app: U) {
+    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, user_app: U) {
+        let el = self.event_loop.take().expect("event loop missing");
+        let mut tuple = (self, user_app);
         let mut suspended = true;
         let mut events_wait_duration = std::time::Duration::ZERO;
-        self.event_loop.take().expect("event loop missing").run(
-            move |event, _event_loop, control_flow| {
-                match event {
-                    event::Event::Suspended => {
-                        suspended = true;
-                        tracing::warn!("suspend event received");
-                        #[cfg(not(target_os = "android"))]
-                        panic!("suspend on non-android platforms is not supported at the moment");
-                        #[cfg(target_os = "android")]
-                        {
-                            user_app.suspend(&mut self);
-                            self.window = None;
-                        }
+        el.run(move |event, _event_loop, control_flow| {
+            let (window_backend, user_app) = &mut tuple;
+            match event {
+                event::Event::Suspended => {
+                    suspended = true;
+                    tracing::warn!("suspend event received");
+                    #[cfg(not(target_os = "android"))]
+                    panic!("suspend on non-android platforms is not supported at the moment");
+                    #[cfg(target_os = "android")]
+                    {
+                        user_app.suspend(window_backend);
+                        window_backend.window = None;
                     }
-                    event::Event::Resumed => {
-                        suspended = false;
-                        tracing::warn!("resume event received");
-                        #[cfg(target_os = "android")]
-                        {
-                            self.window = Some(
-                                self.window_builder
-                                    .clone()
-                                    .build(_event_loop)
-                                    .expect("failed to create window"),
-                            );
-                            user_app.resume(&mut self);
-                        }
-                        let framebuffer_size_physical = self
-                            .window
-                            .as_ref()
-                            .expect("failed to get size of window after resume event")
-                            .inner_size();
+                }
+                event::Event::Resumed => {
+                    suspended = false;
+                    tracing::warn!("resume event received");
+                    #[cfg(target_os = "android")]
+                    {
+                        window_backend.window = Some(
+                            window_backend
+                                .window_builder
+                                .clone()
+                                .build(_event_loop)
+                                .expect("failed to create window"),
+                        );
+                        user_app.resume(window_backend);
+                    }
+                    let framebuffer_size_physical = window_backend
+                        .window
+                        .as_ref()
+                        .expect("failed to get size of window after resume event")
+                        .inner_size();
 
-                        self.framebuffer_size = [
-                            framebuffer_size_physical.width,
-                            framebuffer_size_physical.height,
+                    window_backend.framebuffer_size = [
+                        framebuffer_size_physical.width,
+                        framebuffer_size_physical.height,
+                    ];
+                    user_app.resize_framebuffer(window_backend);
+                    window_backend.scale = window_backend
+                        .window
+                        .as_ref()
+                        .expect("failed to get scale of window after resume event")
+                        .scale_factor() as f32;
+                    let window_size =
+                        framebuffer_size_physical.to_logical::<f32>(window_backend.scale as f64);
+                    window_backend.raw_input = RawInput {
+                        screen_rect: Some(Rect::from_two_pos(
+                            [0.0, 0.0].into(),
+                            [window_size.width, window_size.height].into(),
+                        )),
+                        pixels_per_point: Some(window_backend.scale),
+                        ..Default::default()
+                    };
+                }
+                event::Event::MainEventsCleared => {
+                    // no point in redrawing if we are suspended.
+                    if !suspended {
+                        if let Some(window) = window_backend.window.as_ref() {
+                            window.request_redraw()
+                        }
+                    }
+                }
+                // assume single window, so no need to check window id.
+                event::Event::RedrawRequested(_) => {
+                    if !suspended {
+                        // take egui input
+                        if window_backend.latest_resize_event {
+                            user_app.resize_framebuffer(window_backend);
+                            window_backend.latest_resize_event = false;
+                        }
+                        // begin egui with input
+                        let logical_size = [
+                            window_backend.framebuffer_size[0] as f32 / window_backend.scale,
+                            window_backend.framebuffer_size[1] as f32 / window_backend.scale,
                         ];
-                        user_app.resize_framebuffer(&mut self);
-                        self.scale = self
-                            .window
-                            .as_ref()
-                            .expect("failed to get scale of window after resume event")
-                            .scale_factor() as f32;
-                        let window_size =
-                            framebuffer_size_physical.to_logical::<f32>(self.scale as f64);
-                        self.raw_input = RawInput {
-                            screen_rect: Some(Rect::from_two_pos(
-                                [0.0, 0.0].into(),
-                                [window_size.width, window_size.height].into(),
-                            )),
-                            pixels_per_point: Some(self.scale),
-                            ..Default::default()
-                        };
-                    }
-                    event::Event::MainEventsCleared => {
-                        // no point in redrawing if we are suspended.
-                        if !suspended {
-                            if let Some(window) = self.window.as_ref() {
-                                window.request_redraw()
-                            }
+                        // run userapp gui function. let user do anything he wants with window or gfx backends
+                        if let Some((_platform_output, timeout)) =
+                            user_app.run(logical_size, window_backend)
+                        {
+                            events_wait_duration = timeout;
                         }
                     }
-                    // assume single window, so no need to check window id.
-                    event::Event::RedrawRequested(_) => {
-                        if !suspended {
-                            // take egui input
-                            if self.latest_resize_event {
-                                user_app.resize_framebuffer(&mut self);
-                                self.latest_resize_event = false;
-                            }
-                            // begin egui with input
-                            let logical_size = [
-                                self.framebuffer_size[0] as f32 / self.scale,
-                                self.framebuffer_size[1] as f32 / self.scale,
-                            ];
-                            // run userapp gui function. let user do anything he wants with window or gfx backends
-                            if let Some((_platform_output, timeout)) =
-                                user_app.run(logical_size, &mut self)
-                            {
-                                events_wait_duration = timeout;
-                            }
-                        }
-                    }
-                    rest => self.handle_event(rest),
                 }
-                if self.should_close {
-                    *control_flow = ControlFlow::Exit;
-                } else {
-                    control_flow.set_wait_timeout(events_wait_duration);
-                    events_wait_duration = std::time::Duration::ZERO;
-                }
-            },
-        )
+                rest => window_backend.handle_event(rest),
+            }
+            if window_backend.should_close {
+                *control_flow = ControlFlow::Exit;
+            } else {
+                control_flow.set_wait_timeout(events_wait_duration);
+                events_wait_duration = std::time::Duration::ZERO;
+            }
+        })
     }
 
     fn get_config(&self) -> &BackendConfig {

@@ -24,7 +24,11 @@ pub struct GlfwBackend {
     pub cursor_pos_physical_pixels: [f32; 2],
     pub cursor_inside_bounds: bool,
 }
-
+impl Drop for GlfwBackend {
+    fn drop(&mut self) {
+        tracing::warn!("dropping glfw backend");
+    }
+}
 pub type GlfwCallback = Box<dyn FnOnce(&mut Glfw)>;
 pub type WindowCallback = Box<dyn FnOnce(&mut glfw::Window)>;
 /// The configuration struct for Glfw Backend
@@ -144,34 +148,41 @@ impl WindowBackend for GlfwBackend {
         self.take_raw_input()
     }
 
-    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, mut user_app: U) {
+    fn run_event_loop<U: EguiUserApp<Self> + 'static>(self, user_app: U) {
+        // this is to make sure that user_app is dropped FIRST and then self.
+        // we want the swapchain/surface to be destroyed before the window :) otherwise, we get a segfault.
+        let mut tuple = (user_app, self);
+
         let mut wait_events_duration = std::time::Duration::ZERO;
         let callback = move || {
-            self.glfw
+            let (user_app, window_backend) = &mut tuple;
+            window_backend
+                .glfw
                 .wait_events_timeout(wait_events_duration.as_secs_f64());
             // gather events
-            self.tick();
-            if self.resized_event_pending {
-                user_app.resize_framebuffer(&mut self);
-                self.resized_event_pending = false;
+            window_backend.tick();
+            if window_backend.resized_event_pending {
+                user_app.resize_framebuffer(window_backend);
+                window_backend.resized_event_pending = false;
             }
             let logical_size = [
-                self.framebuffer_size_physical[0] as f32 / self.scale[0],
-                self.framebuffer_size_physical[1] as f32 / self.scale[1],
+                window_backend.framebuffer_size_physical[0] as f32 / window_backend.scale[0],
+                window_backend.framebuffer_size_physical[1] as f32 / window_backend.scale[1],
             ];
             // run userapp gui function. let user do anything he wants with window or gfx backends
-            if let Some((platform_output, timeout)) = user_app.run(logical_size, &mut self) {
+            if let Some((platform_output, timeout)) = user_app.run(logical_size, window_backend) {
                 wait_events_duration = timeout;
                 if !platform_output.copied_text.is_empty() {
-                    self.window
+                    window_backend
+                        .window
                         .set_clipboard_string(&platform_output.copied_text);
                 }
-                self.set_cursor(platform_output.cursor_icon);
+                window_backend.set_cursor(platform_output.cursor_icon);
             } else {
                 wait_events_duration = std::time::Duration::ZERO;
             }
             #[cfg(not(target_os = "emscripten"))]
-            self.window.should_close()
+            window_backend.window.should_close()
         };
         // on emscripten, just keep calling forever i guess.
         #[cfg(target_os = "emscripten")]
@@ -183,9 +194,11 @@ impl WindowBackend for GlfwBackend {
             loop {
                 // returns if loop should close.
                 if callback() {
+                    tracing::warn!("event loop is exiting");
                     break;
                 }
             }
+            std::mem::drop(callback);
         }
     }
 

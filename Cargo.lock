@@ -689,7 +689,7 @@ dependencies = [
  "raw-window-handle 0.5.0",
  "three-d",
  "tracing",
- "winit 0.27.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winit 0.27.5",
 ]
 
 [[package]]
@@ -757,7 +757,7 @@ dependencies = [
  "tracing",
  "wasm-bindgen",
  "web-sys",
- "winit 0.27.5 (git+https://github.com/rust-windowing/winit)",
+ "winit 0.28.1",
 ]
 
 [[package]]
@@ -1094,7 +1094,7 @@ dependencies = [
  "wayland-client",
  "wayland-egl",
  "winapi",
- "winit 0.27.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winit 0.27.5",
 ]
 
 [[package]]
@@ -2337,7 +2337,7 @@ dependencies = [
  "three-d-asset",
  "wasm-bindgen",
  "web-sys",
- "winit 0.27.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winit 0.27.5",
 ]
 
 [[package]]
@@ -3044,8 +3044,9 @@ dependencies = [
 
 [[package]]
 name = "winit"
-version = "0.27.5"
-source = "git+https://github.com/rust-windowing/winit#23b821285ce93bddb38dd71e0290296488140910"
+version = "0.28.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c4755d4ba0e3d30fc7beef2095e246b1e6a6fad0717608bcb87a2df4b003bcf"
 dependencies = [
  "android-activity",
  "bitflags",

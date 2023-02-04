@@ -36,6 +36,11 @@ pub struct WgpuBackend {
     /// just before presenting the swapchain image (surface texture).
     pub command_encoders: Vec<CommandEncoder>,
 }
+impl Drop for WgpuBackend {
+    fn drop(&mut self) {
+        tracing::warn!("dropping wgpu backend");
+    }
+}
 pub struct SurfaceManager {
     /// we create a view for the swapchain image and set it to this field during the `prepare_frame` fn.
     /// users can assume that it will *always* be available during the `UserApp::run` fn. but don't keep any references as
@@ -82,6 +87,11 @@ impl Default for WgpuConfig {
             },
             surface_formats_priority: vec![],
         }
+    }
+}
+impl Drop for SurfaceManager {
+    fn drop(&mut self) {
+        tracing::warn!("dropping wgpu surface");
     }
 }
 impl SurfaceManager {
