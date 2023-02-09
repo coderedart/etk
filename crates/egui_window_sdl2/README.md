@@ -11,14 +11,14 @@ rustflags = [
     "link-arg=-s",
     "-C",
     "link-arg=USE_GLFW=3", # for glfw support. 
-    "-C",
-    "link-arg=-s",
-    "-C",
-    "link-arg=FULL_ES2",# for opengl es 2 emulation
-    "-C",
-    "link-arg=-s",
-    "-C",
-    "link-arg=FULL_ES3", # for opengl es 3 emulation
+    # "-C",
+    # "link-arg=-s",
+    # "-C",
+    # "link-arg=FULL_ES2",# for opengl es 2 emulation
+    # "-C",
+    # "link-arg=-s",
+    # "-C",
+    # "link-arg=FULL_ES3", # for opengl es 3 emulation
     "-C",
     "link-arg=-s",
     "-C",

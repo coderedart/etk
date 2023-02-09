@@ -275,6 +275,10 @@ impl WindowBackend for WinitBackend {
     fn get_raw_input(&mut self) -> RawInput {
         self.take_raw_input()
     }
+
+    fn is_opengl(&self) -> bool {
+        false
+    }
 }
 
 impl WinitBackend {

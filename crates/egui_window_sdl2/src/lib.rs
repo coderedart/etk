@@ -1,8 +1,8 @@
 use std::{path::PathBuf, str::FromStr};
 
 use egui::{Event, Key, Modifiers, PointerButton, RawInput};
+use egui_backend::WindowBackend;
 use egui_backend::*;
-use egui_backend::{GfxApiType, WindowBackend};
 use sdl2::{keyboard::Scancode, video::Window, Sdl};
 
 pub use sdl2;
@@ -20,51 +20,58 @@ pub struct Sdl2Backend {
     pub should_close: bool,
     pub backend_config: BackendConfig,
 }
-
-#[derive(Debug, Default)]
-pub struct SDL2Config {}
+pub type WindowCreatorCallback = Box<dyn FnOnce(&sdl2::VideoSubsystem) -> sdl2::video::Window>;
+pub fn default_window_creator_callback(
+    video_subsystem: &sdl2::VideoSubsystem,
+) -> sdl2::video::Window {
+    let mut window_builder = video_subsystem.window("default title", 800, 600);
+    // use opengl on wasm
+    #[cfg(target_arch = "wasm32")]
+    window_builder.opengl();
+    #[cfg(not(target_arch = "wasm32"))]
+    window_builder.vulkan();
+    window_builder.allow_highdpi();
+    window_builder.resizable();
+    window_builder.build().expect("failed to create a window")
+}
+pub struct SDL2Config {
+    pub window_creator_callback: WindowCreatorCallback,
+}
+impl Default for SDL2Config {
+    fn default() -> Self {
+        Self {
+            window_creator_callback: Box::new(default_window_creator_callback),
+        }
+    }
+}
 
 impl WindowBackend for Sdl2Backend {
     type Configuration = SDL2Config;
 
     type WindowType = sdl2::video::Window;
 
-    fn new(_config: Self::Configuration, backend_config: BackendConfig) -> Self {
+    fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
-
-        let mut window_builder = video_subsystem.window("rust-sdl2 demo", 800, 600);
-        match backend_config.gfx_api_type {
-            GfxApiType::GL => {
-                window_builder.opengl();
-            }
-            GfxApiType::NoApi => {
-                window_builder.vulkan();
-            }
-        }
-        window_builder.allow_highdpi();
-        window_builder.resizable();
-        let window = window_builder.build().expect("failed to create a window");
         let event_pump = sdl_context.event_pump().expect("failed to get event pump");
-        let mut gl_context = None;
-        if let GfxApiType::GL = backend_config.gfx_api_type {
-            gl_context = Some(
-                window
-                    .gl_create_context()
-                    .expect("failed ot create opengl context"),
-            );
+        let window = (config.window_creator_callback)(&video_subsystem);
+        let window_flags = window.window_flags();
+        let opengl_window_flag: u32 = sdl2::sys::SDL_WindowFlags::SDL_WINDOW_OPENGL as u32;
+        let gl_context = if (window_flags & opengl_window_flag) != 0 {
+            tracing::warn!("sdl2 window is created with opengl context. making it current");
+            // if window flags has opengl flag, create and make the context current.
+            let gl_context = window
+                .gl_create_context()
+                .expect("failed to create opengl context");
             window
-                .gl_make_current(gl_context.as_ref().unwrap())
+                .gl_make_current(&gl_context)
                 .expect("failed to make gl context current");
-        }
+            Some(gl_context)
+        } else {
+            None
+        };
         let mouse_state = event_pump.relative_mouse_state();
         let cursor_pos_physical_pixels = [mouse_state.x() as f32, mouse_state.y() as f32];
-        // display dpi shows 101.6 on my normal monitor.. and docs of sdl state that this is unreliable
-        // so we will instead use logical and physical sizes and derive scale from that
-        // let display_dpi = video_subsystem
-        //     .display_dpi(window.display_index().expect("failed to get display index"))
-        //     .expect("failed to get display dpi");
-        // let scale = [display_dpi.1 / 96.0, display_dpi.2 / 96.0]; // 96 is the default dpi?
         let fb_size = window.drawable_size();
         let size_physical_pixels = [fb_size.0, fb_size.1];
         let (logical_width, logical_height) = window.size();
@@ -175,6 +182,10 @@ impl WindowBackend for Sdl2Backend {
 
     fn get_raw_input(&mut self) -> RawInput {
         self.take_raw_input()
+    }
+
+    fn is_opengl(&self) -> bool {
+        unimplemented!()
     }
 }
 

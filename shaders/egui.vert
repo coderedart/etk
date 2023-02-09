@@ -33,6 +33,8 @@ void main() {
                       1.0);
     vout_tc = vin_tc;
     // egui encodes vertex colors in gamma space, so we must decode the colors here:
+    // the reason we do this here is to only convert color *per* vertex and not *per* fragment
+    // and ofcourse, to avoid 
     vout_lc = linear_from_srgba(vin_sc);
     
 }

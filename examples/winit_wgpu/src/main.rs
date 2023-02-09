@@ -1,6 +1,6 @@
 use egui_backend::{
     egui::{self, Window},
-    BackendConfig, EguiUserApp, GfxApiType, GfxBackend, WindowBackend,
+    EguiUserApp, GfxBackend, WindowBackend,
 };
 use egui_render_wgpu::{wgpu, wgpu::RenderPipeline, WgpuBackend};
 use egui_window_winit::WinitBackend;
@@ -124,12 +124,7 @@ pub fn fake_main() {
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let mut window_backend = WinitBackend::new(
-        Default::default(),
-        BackendConfig {
-            gfx_api_type: GfxApiType::NoApi,
-        },
-    );
+    let mut window_backend = WinitBackend::new(Default::default(), Default::default());
 
     let wgpu_backend = WgpuBackend::new(&mut window_backend, Default::default());
     let app = App::new(wgpu_backend);

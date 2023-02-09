@@ -1,3 +1,5 @@
+//! This crate uses `glfw-passthrough` crate as a window backend for egui.
+
 use egui::{Event, Key, PointerButton, Pos2, RawInput};
 use egui_backend::*;
 pub use glfw;
@@ -9,7 +11,9 @@ use glfw::StandardCursor;
 use glfw::WindowEvent;
 use glfw::WindowHint;
 use std::sync::mpsc::Receiver;
-
+/// This is the window backend for egui using [`glfw`]
+/// Most of the startup configuration is done inside [`default_glfw_callback()`] and [`default_window_callback()`]
+/// These are passed to the `new` function using [`GlfwConfig`].
 pub struct GlfwBackend {
     pub glfw: glfw::Glfw,
     pub events_receiver: Receiver<(f64, WindowEvent)>,
@@ -29,17 +33,67 @@ impl Drop for GlfwBackend {
         tracing::warn!("dropping glfw backend");
     }
 }
+/// Signature of Glfw callback function inside [`GlfwConfig`]
+/// we provide a default callback for common usecases -> [`default_glfw_callback()`]
 pub type GlfwCallback = Box<dyn FnOnce(&mut Glfw)>;
+/// This is usually provided by the default [`GlfwConfig`]
+/// If you want to pass in a custom callback, then call this function within that custom callback.
+/// If you want to override some setting, then call this callback inside your custom callback first and then override any hints/settings.
+pub fn default_glfw_callback(glfw_context: &mut Glfw) {
+    // emscripten doesn't have window hint string method. but window_hint fn actually uses it, so we will trigger link error.
+    // on wasm32-unknown-unknown, prefer opengl (webgl)
+    #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+    glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::OpenGl));
+    // on desktop, don't use opengl by default
+    #[cfg(not(target_arch = "wasm32"))]
+    glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
+}
+/// This is the signature for window callback inside new function of [`GlfwBackend`]
 pub type WindowCallback = Box<dyn FnOnce(&mut glfw::Window)>;
-/// The configuration struct for Glfw Backend
 ///
-#[derive(Default)]
+pub fn default_window_callback(window: &mut glfw::Window) {
+    let should_poll = true;
+    // set which events you care about
+    window.set_pos_polling(should_poll);
+    window.set_size_polling(should_poll);
+    window.set_close_polling(should_poll);
+    window.set_refresh_polling(should_poll);
+    window.set_focus_polling(should_poll);
+    window.set_iconify_polling(should_poll);
+    window.set_framebuffer_size_polling(should_poll);
+    window.set_key_polling(should_poll);
+    window.set_char_polling(should_poll);
+    window.set_mouse_button_polling(should_poll);
+    window.set_cursor_pos_polling(should_poll);
+    window.set_cursor_enter_polling(should_poll);
+    window.set_scroll_polling(should_poll);
+    window.set_drag_and_drop_polling(should_poll);
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        // emscripten doesn't have support for these
+        window.set_char_mods_polling(should_poll);
+        window.set_maximize_polling(should_poll);
+        window.set_content_scale_polling(should_poll);
+        window.set_store_lock_key_mods(should_poll);
+    }
+}
+/// The configuration struct for Glfw Backend
+/// passed in to [`WindowBackend::new()`] of [`GlfwBackend`]
 pub struct GlfwConfig {
     /// This callback is called with `&mut Glfw` just before creating a window
-    pub glfw_callback: Option<GlfwCallback>,
+    ///
+    pub glfw_callback: GlfwCallback,
     /// This will be called right after window creation. you can use this to do things at startup like
     /// resizing, changing title, changing to fullscreen etc..
-    pub window_callback: Option<WindowCallback>,
+    pub window_callback: WindowCallback,
+}
+impl Default for GlfwConfig {
+    fn default() -> Self {
+        Self {
+            glfw_callback: Box::new(default_glfw_callback),
+            window_callback: Box::new(default_window_callback),
+        }
+    }
 }
 impl WindowBackend for GlfwBackend {
     type Configuration = GlfwConfig;
@@ -49,58 +103,24 @@ impl WindowBackend for GlfwBackend {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
 
-        // set hints based on gfx api config
-        // emscripten doesn't have window hint string method. but window_hint fn actually uses it, so we will trigger link error.
-        #[cfg(not(target_os = "emscripten"))]
-        match &backend_config.gfx_api_type {
-            GfxApiType::GL => {
-                glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::OpenGl));
-            }
-            GfxApiType::NoApi => {
-                glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
-            }
-        }
-        if let Some(glfw_callback) = config.glfw_callback {
-            glfw_callback(&mut glfw_context);
-        }
+        (config.glfw_callback)(&mut glfw_context);
+
         // create a window
         let (mut window, events_receiver) = glfw_context
             .create_window(800, 600, "Overlay Window", glfw::WindowMode::Windowed)
             .expect("failed to create glfw window");
-        if let GfxApiType::GL = backend_config.gfx_api_type {
+        let api = window.get_client_api();
+        if api == glfw::ffi::OPENGL_API || api == glfw::ffi::OPENGL_ES_API {
             window.make_current();
         }
-        let should_poll = true;
-        // set which events you care about
-        window.set_pos_polling(should_poll);
-        window.set_size_polling(should_poll);
-        window.set_close_polling(should_poll);
-        window.set_refresh_polling(should_poll);
-        window.set_focus_polling(should_poll);
-        window.set_iconify_polling(should_poll);
-        window.set_framebuffer_size_polling(should_poll);
-        window.set_key_polling(should_poll);
-        window.set_char_polling(should_poll);
-        window.set_mouse_button_polling(should_poll);
-        window.set_cursor_pos_polling(should_poll);
-        window.set_cursor_enter_polling(should_poll);
-        window.set_scroll_polling(should_poll);
-        window.set_drag_and_drop_polling(should_poll);
+
         #[cfg(not(target_os = "emscripten"))]
-        let scale = {
-            // emscripten doesn't have support for these
-            window.set_char_mods_polling(should_poll);
-            window.set_maximize_polling(should_poll);
-            window.set_content_scale_polling(should_poll);
-            window.set_store_lock_key_mods(true);
-            window.get_content_scale()
-        };
+        let scale = { window.get_content_scale() };
         #[cfg(target_os = "emscripten")]
         let scale = (1.0f32, 1.0f32); // maybe check framebuffer size vs window size to calculate scale?
 
-        if let Some(window_callback) = config.window_callback {
-            window_callback(&mut window);
-        }
+        (config.window_callback)(&mut window);
+
         // collect details and keep them updated
         let (width, height) = window.get_framebuffer_size();
         let cursor_position = window.get_cursor_pos();
@@ -159,6 +179,7 @@ impl WindowBackend for GlfwBackend {
             window_backend
                 .glfw
                 .wait_events_timeout(wait_events_duration.as_secs_f64());
+
             // gather events
             window_backend.tick();
             if window_backend.resized_event_pending {
@@ -171,7 +192,7 @@ impl WindowBackend for GlfwBackend {
             ];
             // run userapp gui function. let user do anything he wants with window or gfx backends
             if let Some((platform_output, timeout)) = user_app.run(logical_size, window_backend) {
-                wait_events_duration = timeout;
+                wait_events_duration = timeout.min(std::time::Duration::from_secs(1));
                 if !platform_output.copied_text.is_empty() {
                     window_backend
                         .window
@@ -198,7 +219,6 @@ impl WindowBackend for GlfwBackend {
                     break;
                 }
             }
-            std::mem::drop(callback);
         }
     }
 
@@ -208,6 +228,15 @@ impl WindowBackend for GlfwBackend {
 
     fn swap_buffers(&mut self) {
         self.window.swap_buffers()
+    }
+
+    fn is_opengl(&self) -> bool {
+        let api = self.window.get_client_api();
+        match api {
+            glfw::ffi::OPENGL_API | glfw::ffi::OPENGL_ES_API => true,
+            glfw::ffi::NO_API => false,
+            rest => panic!("invalid client api hint {rest}"),
+        }
     }
 
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {

@@ -1,26 +1,27 @@
 //! `egui_backend` crate primarily provides traits to abstract away Window and Rendering parts of egui backends.
-//! this allows us to use any compatible window backend with any gfx backend crate.
+//! this allows us to use any window backend with any gfx backend crate.
 //!
 //! egui is an immediate mode gui library. The lifecycle of egui in every frame goes like this:
 //! 1. takes input from the window backend. eg: mouse position, keyboard events, resize..
-//! 2. constructs gui objects like windows / panels / buttons etc..
-//! 3. outputs gpu friendly data to be drawn by a gfx backend.
+//! 2. constructs gui objects like windows / panels / buttons etc.. and deals with any input interactions.
+//! 3. outputs those gui objects as gpu friendly data to be drawn by a gfx backend.
 //!
 //! So, we need a WindowBackend to provide input to egui and a GfxBackend to draw egui's output.
-//! egui project already provides a crate called `eframe` for this pupose using `winit` on desktop, custom backend on web and `wgpu`/`glow` for rendering.
-//! But it exposes a very limited api.
-//! `egui_backend` crate instead is to enable separation of window + gfx concerns using traits.
-//! This allows someone to only work on winit backend, and leave gfx backend work to someone else. And because of these common traits,
-//! they will all work without having to write any specific glue code.
+//! egui already provides an official backends for wgpu, winit and glow, along with a higher level wrapper crate called `eframe`
+//! eframe uses `winit` on desktop, custom backend on web and `wgpu`/`glow` for rendering.
+//! If that serves your usecase, then it is recommended to keep using that.
 //!
-//! this crate provides 4 traits:
-//! 1. `WindowBackend`: implemented by window backends like winit, glfw, sdl2 etc..
-//! 2. `GfxBackend<W: WindowBackend>`: implemented by rendering backends for particular or any window backends
-//! 3. `UserApp<W: WindowBackend, G: GfxBackend>`: implemented by egui users for a particular combination or any combination of Window / Gfx Backends
+//! `egui_backend` crate instead tries to enable separation of window + gfx concerns using traits.
+//!
+//! this crate provides 3 traits:
+//! 1. [`WindowBackend`]: implemented by window backends like [winit](https://docs.rs/winit), [glfw](https://docs.rs/glfw), [sdl2](https://docs.rs/sdl2) etc..
+//! 2. [`GfxBackend`]: implemented by rendering backends like [wgpu](https://docs.rs/wgpu), [glow](https://docs.rs/glow), [three-d](https://docs.rs/three-d),
+//! 3. [`EguiUserApp<WB>`]: implemented by end user's struct which holds the app data as well as egui context and the renderer.
+//!
+//! This crate will also try to provide functions or structs which are useful across all backends.
+//! 1. [`BackendConfig`]: It holds the common configuration for all the window/gfx backends.
 //!
 //! look at the docs of the relevant trait to learn more.
-//!
-//! reminder: https://developer.chrome.com/en/docs/web-platform/webgpu/ origin trials of webgpu in chrome ends on 1st Feb, 2023.
 
 use std::time::Duration;
 
@@ -33,32 +34,7 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 /// Intended to provide a common struct which all window backends accept as their configuration.
 /// In future, might add more options like initial window size/title etc..
 #[derive(Debug, Clone, Default)]
-pub struct BackendConfig {
-    /// The kind of graphics api that we plan to use the window with
-    pub gfx_api_type: GfxApiType,
-}
-/// Gfx Apis like Opengl (Gl-es) require some special config while creating a window.
-/// OTOH, modern APIs like metal/vk/dx deal with configuration themselves after creating a window.
-/// So, we need to tell window backend to choose whether we want a Gl or Non-GL kinda variant.
-#[derive(Debug, Clone)]
-pub enum GfxApiType {
-    /// when we want the gfx backend to decide the api.
-    /// usually, this means that we don't want a opengl window and the renderer will choose the right api (vk/dx/mtl etc..)
-    NoApi,
-    /// This means that we require a GL api.
-    /// on glfw/sdl2, it means they will create the necessary opengl contexts and make them current.
-    /// the renderer will use the functions `get_proc_address` or `swap_buffers`.
-    GL,
-}
-
-impl Default for GfxApiType {
-    fn default() -> Self {
-        #[cfg(target_arch = "wasm32")]
-        return Self::GL;
-        #[cfg(not(target_arch = "wasm32"))]
-        return Self::NoApi;
-    }
-}
+pub struct BackendConfig {}
 
 /// Implement this trait for your windowing backend. the main responsibility of a
 /// Windowing Backend is to
@@ -100,6 +76,7 @@ pub trait WindowBackend: Sized {
     fn swap_buffers(&mut self) {
         unimplemented!("swap buffers is not implemented for this window backend");
     }
+    fn is_opengl(&self) -> bool;
     /// get openGL function addresses. optional, just like `Self::swap_buffers`.
     /// panic! if it doesn't apply to your WindowBackend. eg: winit.
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
@@ -208,43 +185,70 @@ pub trait EguiUserApp<WB: WindowBackend> {
 
 /// Some nice util functions commonly used by egui backends.
 pub mod util {
-    /// input: clip rectangle, scale and framebuffer size in physical pixels
+    /// /// For wgpu, dx, metal, use [`scissor_from_clip_rect`]..
+    ///
+    /// **NOTE**:
+    /// egui coordinates are in logical window space with top left being [0, 0].
+    /// In opengl, bottom left is [0, 0].
+    /// so, we need to use bottom left clip-rect coordinate as x,y instead of top left.
+    /// 1. bottom left corner's y coordinate is simply top left corner's y added with clip rect height
+    /// 2. but this `y` is represents top border + y units. in opengl, we need units from bottom border  
+    /// 3. we know that for any point y, distance between top and y + distance between bottom and y gives us total height
+    /// 4. so, height - y units from top gives us y units from bottom.
+    /// math is suprisingly hard to write down.. just draw it on a paper, it makes sense.
+    pub fn scissor_from_clip_rect_opengl(
+        clip_rect: &egui::Rect,
+        scale: f32,
+        physical_framebuffer_size: [u32; 2],
+    ) -> Option<[u32; 4]> {
+        scissor_from_clip_rect(clip_rect, scale, physical_framebuffer_size).map(|mut arr| {
+            arr[1] = physical_framebuffer_size[1] - (arr[1] + arr[3]);
+            arr
+        })
+    }
+    /// input: clip rectangle in logical pixels, scale and framebuffer size in physical pixels
     /// we will get [x, y, width, height] of the scissor rectangle.
     ///
     /// internally, it will
     /// 1. multiply clip rect and scale  to convert the logical rectangle to a physical rectangle in framebuffer space.
-    /// 2. clamp the rectangle between 0..width and 0..height of the frambuffer.
-    /// 3. round the rectangle into the nearest u32 (within the above frambuffer bounds ofc)
-    /// 4. return Some only if width/height of scissor region are not zero.
+    /// 2. clamp the rectangle between 0..width and 0..height of the frambuffer. make sure that width/height are positive/zero.
+    /// 3. return Some only if width/height of scissor region are not zero.
+    ///
+    /// This fn is for wgpu/metal/directx.
+    /// For opengl, use [`scissor_from_clip_rect_opengl`].
     pub fn scissor_from_clip_rect(
         clip_rect: &egui::Rect,
         scale: f32,
         physical_framebuffer_size: [u32; 2],
     ) -> Option<[u32; 4]> {
         // copy paste from official egui impl because i have no idea what this is :D
+
+        // first, we turn the clip rectangle into physical framebuffer coordinates
+        // clip_min is top left point and clip_max is bottom right.
         let clip_min_x = scale * clip_rect.min.x;
         let clip_min_y = scale * clip_rect.min.y;
         let clip_max_x = scale * clip_rect.max.x;
         let clip_max_y = scale * clip_rect.max.y;
-        let clip_min_x = clip_min_x.clamp(0.0, physical_framebuffer_size[0] as f32);
-        let clip_min_y = clip_min_y.clamp(0.0, physical_framebuffer_size[1] as f32);
-        let clip_max_x = clip_max_x.clamp(clip_min_x, physical_framebuffer_size[0] as f32);
-        let clip_max_y = clip_max_y.clamp(clip_min_y, physical_framebuffer_size[1] as f32);
 
-        let clip_min_x = clip_min_x.round() as u32;
-        let clip_min_y = clip_min_y.round() as u32;
-        let clip_max_x = clip_max_x.round() as u32;
-        let clip_max_y = clip_max_y.round() as u32;
+        // round to integers
+        let clip_min_x = clip_min_x.round() as i32;
+        let clip_min_y = clip_min_y.round() as i32;
+        let clip_max_x = clip_max_x.round() as i32;
+        let clip_max_y = clip_max_y.round() as i32;
 
-        let width = (clip_max_x - clip_min_x).max(1);
-        let height = (clip_max_y - clip_min_y).max(1);
-
-        // Clip scissor rectangle to target size.
-        let clip_x = clip_min_x.min(physical_framebuffer_size[0]);
-        let clip_y = clip_min_y.min(physical_framebuffer_size[1]);
-        let clip_width = width.min(physical_framebuffer_size[0] - clip_x);
-        let clip_height = height.min(physical_framebuffer_size[1] - clip_y);
-        // return none if scissor width/height are zero
-        (clip_height != 0 && clip_width != 0).then_some([clip_x, clip_y, clip_width, clip_height])
+        // clamp top_left of clip rect to be within framebuffer bounds
+        let clip_min_x = clip_min_x.clamp(0, physical_framebuffer_size[0] as i32);
+        let clip_min_y = clip_min_y.clamp(0, physical_framebuffer_size[1] as i32);
+        // clamp bottom right of clip rect to be between top_left of clip rect and framebuffer bottom right bounds
+        let clip_max_x = clip_max_x.clamp(clip_min_x, physical_framebuffer_size[0] as i32);
+        let clip_max_y = clip_max_y.clamp(clip_min_y, physical_framebuffer_size[1] as i32);
+        // x,y are simply top left coords
+        let x = clip_min_x as u32;
+        let y = clip_min_y as u32;
+        // width height by subtracting bottom right with top left coords.
+        let width = (clip_max_x - clip_min_x) as u32;
+        let height = (clip_max_y - clip_min_y) as u32;
+        // return only if scissor width/height are not zero. otherwise, no need for a scissor rect at all
+        (width != 0 && height != 0).then_some([x, y, width, height])
     }
 }

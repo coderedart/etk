@@ -1,6 +1,6 @@
 use egui_backend::{
     egui::{self, Window},
-    BackendConfig, EguiUserApp, GfxApiType, GfxBackend, WindowBackend,
+    BackendConfig, EguiUserApp, GfxBackend, WindowBackend,
 };
 use egui_render_wgpu::{
     wgpu::RenderPipeline,
@@ -168,7 +168,7 @@ pub fn fake_main() {
         .init();
     let mut window_backend = GlfwBackend::new(
         GlfwConfig {
-            glfw_callback: Some(Box::new(|glfw_context| {
+            glfw_callback: Box::new(|glfw_context| {
                 // make the window that will be created transparent.
                 glfw_context.window_hint(
                     egui_window_glfw_passthrough::glfw::WindowHint::TransparentFramebuffer(true),
@@ -176,13 +176,11 @@ pub fn fake_main() {
                 glfw_context.window_hint(egui_window_glfw_passthrough::glfw::WindowHint::Floating(
                     true,
                 ));
-            })),
-            window_callback: None,
+                egui_window_glfw_passthrough::default_glfw_callback(glfw_context);
+            }),
+            ..Default::default()
         },
-        BackendConfig {
-            // glfw will set the api type to noapi.
-            gfx_api_type: GfxApiType::NoApi,
-        },
+        BackendConfig {},
     );
 
     let app = App::new(&mut window_backend);

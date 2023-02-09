@@ -1,5 +1,5 @@
 [package]
-name = "sdl2_glow"
+name = "glfw_glow"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 egui_backend = { path = "../../crates/egui_backend" }
-egui_window_sdl2 = { path = "../../crates/egui_window_sdl2" }
+egui_window_glfw_passthrough = { path = "../../crates/egui_window_glfw_passthrough" }
 egui_render_glow = { path = "../../crates/egui_render_glow" }
 
 tracing-subscriber = {version = "*", features = ["env-filter", "registry"]}

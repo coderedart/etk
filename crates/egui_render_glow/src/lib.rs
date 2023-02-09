@@ -1,24 +1,16 @@
+mod helpers;
+use bytemuck::cast_slice;
 use egui::TextureId;
 use egui_backend::{egui::TexturesDelta, *};
-use tracing::{info, warn};
-
-use bytemuck::cast_slice;
-
-use intmap::IntMap;
-#[cfg(not(target_arch = "wasm32"))]
-const EGUI_VS: &str = include_str!("../../../shaders/egui.vert");
-#[cfg(not(target_arch = "wasm32"))]
-const EGUI_FS: &str = include_str!("../../../shaders/egui.frag");
-#[cfg(target_arch = "wasm32")]
-const EGUI_VS: &str = include_str!("../../../shaders/egui_webgl.vert");
-#[cfg(target_arch = "wasm32")]
-const EGUI_FS: &str = include_str!("../../../shaders/egui_webgl.frag");
-
-use std::sync::Arc;
-
 pub use glow;
 use glow::{Context as GlowContext, HasContext, *};
+use helpers::*;
+use intmap::IntMap;
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
+/// opengl error checking flushes all commands and forces synchronization
+/// so, we should make this feature gated eventually and maybe use debug callbacks (on desktop atleast)
 #[macro_export]
 macro_rules! glow_error {
     ($glow_context: ident) => {
@@ -28,6 +20,10 @@ macro_rules! glow_error {
         }
     };
 }
+/// All shaders are targeting #version 300 es
+pub const EGUI_VS: &str = include_str!("../../../shaders/egui.vert");
+/// the output will be in srgb space, so make sure to disable framebuffer srgb.
+pub const EGUI_FS: &str = include_str!("../../../shaders/egui.frag");
 
 /// these are config to be provided to browser when requesting a webgl context
 ///
@@ -79,94 +75,22 @@ impl Drop for GlowBackend {
         unsafe { self.painter.destroy(&self.glow_context) };
     }
 }
+
 #[derive(Debug, Default)]
 pub struct GlowConfig {
     pub webgl_config: WebGlConfig,
+    pub enable_debug: bool,
 }
-// check srgb support??
-// and maybe enable debug support.
-// if let Some(debug) = native_config.debug {
-//     if debug {
-//         gl.enable(glow::DEBUG_OUTPUT);
-//         gl.enable(glow::DEBUG_OUTPUT_SYNCHRONOUS);
-//         assert!(gl.supports_debug());
-//         gl.debug_message_callback(
-//             |source, error_type, error_id, severity, error_str| {
-//                 match severity {
-//                     glow::DEBUG_SEVERITY_NOTIFICATION => tracing::debug!(
-//                         source, error_type, error_id, severity, error_str
-//                     ),
-//                     glow::DEBUG_SEVERITY_LOW => {
-//                         tracing::info!(
-//                             source, error_type, error_id, severity, error_str
-//                         )
-//                     }
-//                     glow::DEBUG_SEVERITY_MEDIUM => {
-//                         tracing::warn!(
-//                             source, error_type, error_id, severity, error_str
-//                         )
-//                     }
-//                     glow::DEBUG_SEVERITY_HIGH => tracing::error!(
-//                         source, error_type, error_id, severity, error_str
-//                     ),
-//                     rest => panic!("unknown severity {rest}"),
-//                 };
-//             },
-//         );
-//         glow_error!(gl);
-//     }
-// }
+
 impl GfxBackend for GlowBackend {
     type Configuration = GlowConfig;
 
-    fn new(window_backend: &mut impl WindowBackend, _config: Self::Configuration) -> Self {
-        #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
-        let glow_context = {
-            use raw_window_handle::HasRawWindowHandle;
-            use wasm_bindgen::JsCast;
-            let handle_id = match window_backend
-                .get_window()
-                .expect("window backend doesn't have a window yet???")
-                .raw_window_handle()
-            {
-                crate::raw_window_handle::RawWindowHandle::Web(handle_id) => handle_id.id,
-                _ => unimplemented!("non web raw window handles are not supported on wasm32"),
-            };
-            let canvas_node: wasm_bindgen::JsValue = web_sys::window()
-                .and_then(|win| win.document())
-                .and_then(|doc: web_sys::Document| {
-                    doc.query_selector(&format!("[data-raw-handle=\"{handle_id}\"]"))
-                        .ok()
-                })
-                .expect("expected to find single canvas")
-                .into();
-            let canvas_element: web_sys::HtmlCanvasElement = canvas_node.into();
-            let context_options = create_context_options_from_webgl_config(_config.webgl_config);
-            let context = canvas_element
-                .get_context_with_context_options("webgl2", &context_options)
-                .unwrap()
-                .unwrap()
-                .dyn_into()
-                .unwrap();
-            glow::Context::from_webgl2_context(context)
-        };
-        #[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
-        let glow_context = unsafe {
-            let gl = glow::Context::from_loader_function(|s| window_backend.get_proc_address(s));
-            glow_error!(gl);
-            let gl_version = gl.version();
-            glow_error!(gl);
-            info!("glow using gl version: {gl_version:?}");
-            #[cfg(not(target_arch = "wasm32"))]
-            assert!(
-                gl_version.major >= 3,
-                "egui glow only supports opengl major version 3 or above {gl_version:?}"
-            );
-
-            gl
-        };
-        let glow_context: Arc<glow::Context> = Arc::new(glow_context);
-
+    fn new(window_backend: &mut impl WindowBackend, config: Self::Configuration) -> Self {
+        let glow_context: Arc<glow::Context> =
+            unsafe { create_glow_context(window_backend, config.webgl_config) };
+        for (index, extension) in glow_context.supported_extensions().iter().enumerate() {
+            println!("ext {index}: {extension}");
+        }
         if glow_context.supported_extensions().contains("EXT_sRGB")
             || glow_context.supported_extensions().contains("GL_EXT_sRGB")
             || glow_context
@@ -177,11 +101,8 @@ impl GfxBackend for GlowBackend {
         } else {
             warn!("no srgb support detected by egui glow");
         }
-        unsafe {
-            glow_error!(glow_context);
-        }
 
-        let painter = Painter::new(&glow_context);
+        let painter = unsafe { Painter::new(&glow_context) };
         Self {
             glow_context,
             painter,
@@ -190,7 +111,7 @@ impl GfxBackend for GlowBackend {
     }
 
     fn suspend(&mut self, _window_backend: &mut impl WindowBackend) {
-        unimplemented!("glow render backend doesn't support suspend callback yet");
+        tracing::warn!("egui glow backend doesn't do anything on suspend");
     }
 
     fn resume(&mut self, _window_backend: &mut impl WindowBackend) {
@@ -240,64 +161,6 @@ impl GfxBackend for GlowBackend {
         }
     }
 }
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
-fn create_context_options_from_webgl_config(webgl_config: crate::WebGlConfig) -> js_sys::Object {
-    let context_options = js_sys::Object::new();
-    if let Some(value) = webgl_config.alpha {
-        js_sys::Reflect::set(&context_options, &"alpha".into(), &value.into()).unwrap();
-    }
-    if let Some(value) = webgl_config.antialias {
-        js_sys::Reflect::set(&context_options, &"antialias".into(), &value.into()).unwrap();
-    }
-    if let Some(value) = webgl_config.depth {
-        js_sys::Reflect::set(&context_options, &"depth".into(), &value.into()).unwrap();
-    }
-    if let Some(value) = webgl_config.desynchronized {
-        js_sys::Reflect::set(&context_options, &"desynchronized".into(), &value.into()).unwrap();
-    }
-    if let Some(value) = webgl_config.fail_if_major_performance_caveat {
-        js_sys::Reflect::set(
-            &context_options,
-            &"failIfMajorPerformanceCaveat".into(),
-            &value.into(),
-        )
-        .unwrap();
-    }
-    if let Some(value) = webgl_config.low_power {
-        js_sys::Reflect::set(
-            &context_options,
-            &"powerPreference".into(),
-            &if value {
-                "low-power"
-            } else {
-                "high-performance"
-            }
-            .into(),
-        )
-        .unwrap();
-    }
-    if let Some(value) = webgl_config.premultiplied_alpha {
-        js_sys::Reflect::set(
-            &context_options,
-            &"premultipliedAlpha".into(),
-            &value.into(),
-        )
-        .unwrap();
-    }
-    if let Some(value) = webgl_config.preserve_drawing_buffer {
-        js_sys::Reflect::set(
-            &context_options,
-            &"preserveDrawingBuffer".into(),
-            &value.into(),
-        )
-        .unwrap();
-    }
-    if let Some(value) = webgl_config.stencil {
-        js_sys::Reflect::set(&context_options, &"stencil".into(), &value.into()).unwrap();
-    }
-    context_options
-}
 pub struct GpuTexture {
     handle: glow::Texture,
     width: u32,
@@ -306,6 +169,10 @@ pub struct GpuTexture {
 }
 
 /// Egui Painter using glow::Context
+/// Assumptions:
+/// 1. srgb framebuffer
+/// 2. opengl 3+ on desktop and webgl2 only on web.
+/// 3.
 pub struct Painter {
     /// Most of these objects are created at startup
     pub linear_sampler: Sampler,
@@ -326,27 +193,37 @@ pub struct Painter {
 }
 
 impl Painter {
-    pub fn new(glow_context: &glow::Context) -> Self {
+    /// # Safety: well, its opengl.. so anything can go wrong.
+    pub unsafe fn new(gl: &glow::Context) -> Self {
         info!("creating glow egui painter");
         unsafe {
-            glow_error!(glow_context);
+            info!("GL Version: {}", gl.get_parameter_string(glow::VERSION));
+            info!("GL Renderer: {}", gl.get_parameter_string(glow::RENDERER));
+            info!("Gl Vendor: {}", gl.get_parameter_string(glow::VENDOR));
+            if gl.version().major > 1 {
+                info!(
+                    "GLSL version: {}",
+                    gl.get_parameter_string(glow::SHADING_LANGUAGE_VERSION)
+                );
+            }
+            glow_error!(gl);
             // compile shaders
-            let egui_program = create_program_from_src(glow_context, EGUI_VS, EGUI_FS);
+            let egui_program = create_program_from_src(gl, EGUI_VS, EGUI_FS);
             // shader verification
-            glow_error!(glow_context);
-            let u_screen_size = glow_context
+            glow_error!(gl);
+            let u_screen_size = gl
                 .get_uniform_location(egui_program, "u_screen_size")
                 .expect("failed to find u_screen_size");
-            info!("location of uniform u_screen_size is {u_screen_size:?}");
-            let u_sampler = glow_context
+            debug!("location of uniform u_screen_size is {u_screen_size:?}");
+            let u_sampler = gl
                 .get_uniform_location(egui_program, "u_sampler")
                 .expect("failed to find u_sampler");
-            info!("location of uniform u_sampler is {u_sampler:?}");
-            glow_context.use_program(Some(egui_program));
-            let (vao, vbo, ebo) = create_egui_vao_buffers(glow_context, egui_program);
-            info!("created egui vao, vbo, ebo");
-            let (linear_sampler, nearest_sampler) = create_samplers(glow_context);
-            info!("created linear and nearest samplers");
+            debug!("location of uniform u_sampler is {u_sampler:?}");
+            gl.use_program(Some(egui_program));
+            let (vao, vbo, ebo) = create_egui_vao_buffers(gl, egui_program);
+            debug!("created egui vao, vbo, ebo");
+            let (linear_sampler, nearest_sampler) = create_samplers(gl);
+            debug!("created linear and nearest samplers");
             Self {
                 managed_textures: Default::default(),
                 egui_program,
@@ -412,7 +289,10 @@ impl Painter {
             glow_error!(glow_context);
 
             let (pixels, size): (Vec<u8>, [usize; 2]) = match delta.image {
-                egui::ImageData::Color(_) => todo!(),
+                egui::ImageData::Color(c) => (
+                    c.pixels.iter().flat_map(egui::Color32::to_array).collect(),
+                    c.size,
+                ),
                 egui::ImageData::Font(font_image) => (
                     font_image
                         .srgba_pixels(None)
@@ -472,7 +352,7 @@ impl Painter {
         glow_context.disable(glow::DEPTH_TEST);
         glow_error!(glow_context);
         #[cfg(not(target_arch = "wasm32"))]
-        glow_context.enable(glow::FRAMEBUFFER_SRGB);
+        glow_context.disable(glow::FRAMEBUFFER_SRGB);
 
         glow_error!(glow_context);
         glow_context.active_texture(glow::TEXTURE0);
@@ -497,29 +377,20 @@ impl Painter {
         glow_context.uniform_1_i32(Some(&self.u_sampler), 0);
         glow_context.uniform_2_f32_slice(Some(&self.u_screen_size), &screen_size_logical);
         for clipped_primitive in &self.clipped_primitives {
-            let clip_rect = clipped_primitive.clip_rect;
-            let clip_min_x = scale * clip_rect.min.x;
-            let clip_min_y = scale * clip_rect.min.y;
-            let clip_max_x = scale * clip_rect.max.x;
-            let clip_max_y = scale * clip_rect.max.y;
-
-            // Round to integer:
-            let clip_min_x = clip_min_x.round() as i32;
-            let clip_min_y = clip_min_y.round() as i32;
-            let clip_max_x = clip_max_x.round() as i32;
-            let clip_max_y = clip_max_y.round() as i32;
-
-            // Clamp:
-            let clip_min_x = clip_min_x.clamp(0, screen_size_physical[0] as i32);
-            let clip_min_y = clip_min_y.clamp(0, screen_size_physical[1] as i32);
-            let clip_max_x = clip_max_x.clamp(clip_min_x, screen_size_physical[0] as i32);
-            let clip_max_y = clip_max_y.clamp(clip_min_y, screen_size_physical[1] as i32);
-            let clip_x = clip_min_x;
-            let clip_y = screen_size_physical[1] as i32 - clip_max_y; // NOTE: Y coordinate must be flipped inside the cliprect relative to screen height
-            let width = clip_max_x - clip_min_x;
-            let height = clip_max_y - clip_min_y;
-            glow_context.scissor(clip_x, clip_y, width, height);
-
+            if let Some(scissor_rect) = egui_backend::util::scissor_from_clip_rect_opengl(
+                &clipped_primitive.clip_rect,
+                scale,
+                screen_size_physical,
+            ) {
+                glow_context.scissor(
+                    scissor_rect[0] as i32,
+                    scissor_rect[1] as i32,
+                    scissor_rect[2] as i32,
+                    scissor_rect[3] as i32,
+                );
+            } else {
+                continue;
+            }
             match clipped_primitive.primitive {
                 egui::epaint::Primitive::Mesh(ref mesh) => {
                     glow_context.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
@@ -527,12 +398,12 @@ impl Painter {
                     glow_context.buffer_data_u8_slice(
                         glow::ARRAY_BUFFER,
                         cast_slice(&mesh.vertices),
-                        glow::STATIC_DRAW,
+                        glow::STREAM_DRAW,
                     );
                     glow_context.buffer_data_u8_slice(
                         glow::ELEMENT_ARRAY_BUFFER,
                         cast_slice(&mesh.indices),
-                        glow::STATIC_DRAW,
+                        glow::STREAM_DRAW,
                     );
                     glow_error!(glow_context);
                     match mesh.texture_id {
@@ -585,6 +456,7 @@ impl Painter {
     /// This must be called only once.
     /// must not use it again because this destroys all the opengl objects.
     pub unsafe fn destroy(&mut self, glow_context: &glow::Context) {
+        tracing::warn!("destroying egui glow painter");
         glow_context.delete_sampler(self.linear_sampler);
         glow_context.delete_sampler(self.nearest_sampler);
         for (_, texture) in std::mem::take(&mut self.managed_textures) {
@@ -595,160 +467,4 @@ impl Painter {
         glow_context.delete_buffer(self.vbo);
         glow_context.delete_buffer(self.ebo);
     }
-}
-unsafe fn create_program_from_src(
-    glow_context: &glow::Context,
-    vertex_src: &str,
-    frag_src: &str,
-) -> Program {
-    tracing::info!(
-        "creating shaders. supported shader versions: {}",
-        &glow_context.get_parameter_string(glow::SHADING_LANGUAGE_VERSION)
-    );
-    let vs = glow_context
-        .create_shader(glow::VERTEX_SHADER)
-        .expect("shader creation failed");
-    let fs = glow_context
-        .create_shader(glow::FRAGMENT_SHADER)
-        .expect("failed to create frag shader");
-    glow_context.shader_source(vs, vertex_src);
-    glow_context.shader_source(fs, frag_src);
-    glow_context.compile_shader(vs);
-    let info_log = glow_context.get_shader_info_log(vs);
-    if !info_log.is_empty() {
-        warn!("vertex shader info log: {info_log}")
-    }
-    if !glow_context.get_shader_compile_status(vs) {
-        panic!("failed to compile vertex shader. info_log: {info_log}");
-    }
-    glow_error!(glow_context);
-    glow_context.compile_shader(fs);
-    let info_log = glow_context.get_shader_info_log(fs);
-    if !info_log.is_empty() {
-        warn!("fragment shader info log: {info_log}")
-    }
-    if !glow_context.get_shader_compile_status(fs) {
-        panic!("failed to compile fragment shader. info_log: {info_log}");
-    }
-    glow_error!(glow_context);
-
-    let egui_program = glow_context
-        .create_program()
-        .expect("failed to create glow program");
-    glow_context.attach_shader(egui_program, vs);
-    glow_context.attach_shader(egui_program, fs);
-    glow_context.link_program(egui_program);
-    let info_log = glow_context.get_program_info_log(egui_program);
-    if !info_log.is_empty() {
-        warn!("egui program info log: {info_log}")
-    }
-    if !glow_context.get_program_link_status(egui_program) {
-        panic!("failed to link egui glow program. info_log: {info_log}");
-    }
-    glow_error!(glow_context);
-    info!("egui shader program successfully compiled and linked");
-    // no need for shaders anymore after linking
-    glow_context.detach_shader(egui_program, vs);
-    glow_context.detach_shader(egui_program, fs);
-    glow_context.delete_shader(vs);
-    glow_context.delete_shader(fs);
-    egui_program
-}
-
-unsafe fn create_egui_vao_buffers(
-    glow_context: &glow::Context,
-    program: Program,
-) -> (VertexArray, Buffer, Buffer) {
-    let vao = glow_context
-        .create_vertex_array()
-        .expect("failed to create egui vao");
-    glow_context.bind_vertex_array(Some(vao));
-    glow_error!(glow_context);
-
-    // buffers
-    let vbo = glow_context
-        .create_buffer()
-        .expect("failed to create array buffer");
-    glow_context.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-    glow_error!(glow_context);
-
-    let ebo = glow_context
-        .create_buffer()
-        .expect("failed to create element buffer");
-    glow_context.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
-    glow_error!(glow_context);
-
-    // enable position, tex coords and color attributes. this will bind vbo to the vao
-    let location = glow_context
-        .get_attrib_location(program, "vin_pos")
-        .expect("failed to get vin_pos location");
-    info!("vin_pos vertex attribute location is {location}");
-    glow_context.enable_vertex_attrib_array(location);
-    glow_context.vertex_attrib_pointer_f32(location, 2, glow::FLOAT, false, 20, 0);
-    let location = glow_context
-        .get_attrib_location(program, "vin_tc")
-        .expect("failed to get vin_tc location");
-    info!("vin_tc vertex attribute location is {location}");
-    glow_context.enable_vertex_attrib_array(location);
-    glow_context.vertex_attrib_pointer_f32(location, 2, glow::FLOAT, false, 20, 8);
-    let location = glow_context
-        .get_attrib_location(program, "vin_sc")
-        .expect("failed to get vin_sc location");
-    info!("vin_sc vertex attribute location is {location}");
-    glow_context.enable_vertex_attrib_array(location);
-    glow_context.vertex_attrib_pointer_f32(location, 4, glow::UNSIGNED_BYTE, false, 20, 16);
-
-    glow_error!(glow_context);
-    (vao, vbo, ebo)
-}
-
-unsafe fn create_samplers(glow_context: &glow::Context) -> (Sampler, Sampler) {
-    let nearest_sampler = glow_context
-        .create_sampler()
-        .expect("failed to create nearest sampler");
-    glow_context.bind_sampler(0, Some(nearest_sampler));
-    glow_error!(glow_context);
-
-    glow_context.sampler_parameter_i32(
-        nearest_sampler,
-        glow::TEXTURE_MAG_FILTER,
-        glow::NEAREST
-            .try_into()
-            .expect("failed to fit NEAREST in i32"),
-    );
-    glow_error!(glow_context);
-
-    glow_context.sampler_parameter_i32(
-        nearest_sampler,
-        glow::TEXTURE_MIN_FILTER,
-        glow::NEAREST
-            .try_into()
-            .expect("failed to fit NEAREST in i32"),
-    );
-    glow_error!(glow_context);
-
-    let linear_sampler = glow_context
-        .create_sampler()
-        .expect("failed to create linear sampler");
-    glow_context.bind_sampler(0, Some(linear_sampler));
-    glow_error!(glow_context);
-
-    glow_context.sampler_parameter_i32(
-        linear_sampler,
-        glow::TEXTURE_MAG_FILTER,
-        glow::LINEAR
-            .try_into()
-            .expect("failed to fit LINEAR MIPMAP NEAREST in i32"),
-    );
-    glow_error!(glow_context);
-
-    glow_context.sampler_parameter_i32(
-        linear_sampler,
-        glow::TEXTURE_MIN_FILTER,
-        glow::LINEAR
-            .try_into()
-            .expect("failed to fit LINEAR MIPMAP NEAREST in i32"),
-    );
-    glow_error!(glow_context);
-    (linear_sampler, nearest_sampler)
 }
