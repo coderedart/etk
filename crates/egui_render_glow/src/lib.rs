@@ -193,7 +193,9 @@ pub struct Painter {
 }
 
 impl Painter {
-    /// # Safety: well, its opengl.. so anything can go wrong.
+    /// # Safety
+    /// well, its opengl.. so anything can go wrong. but basicaly, make sure that this opengl context is valid/current
+    /// and manually call [`Self::destroy`] before dropping this.
     pub unsafe fn new(gl: &glow::Context) -> Self {
         info!("creating glow egui painter");
         unsafe {

@@ -5,7 +5,7 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["glfw_sys"]
+default = ["glfw/default"]
 all = ["glfw_sys", "vulkan", "wayland", "log", "image"]
 glfw_sys = ["glfw/glfw-sys-passthrough"]
 vulkan = ["glfw/vulkan"]

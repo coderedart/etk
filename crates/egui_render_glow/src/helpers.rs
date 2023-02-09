@@ -10,10 +10,9 @@ pub unsafe fn create_glow_wasm32_unknown(
     window_backend: &mut impl WindowBackend,
     webgl_config: WebGlConfig,
 ) -> glow::Context {
-    use raw_window_handle::HasRawWindowHandle;
+    use egui_backend::raw_window_handle::HasRawWindowHandle;
     use wasm_bindgen::JsCast;
 
-    use crate::WebGlConfig;
     let handle_id = match window_backend
         .get_window()
         .expect("window backend doesn't have a window yet???")
@@ -208,6 +207,8 @@ pub unsafe fn create_samplers(glow_context: &glow::Context) -> (Sampler, Sampler
     glow_error!(glow_context);
     (linear_sampler, nearest_sampler)
 }
+
+#[allow(unused)]
 pub unsafe fn enable_debug(gl: &glow::Context) {
     gl.enable(glow::DEBUG_OUTPUT);
     gl.enable(glow::DEBUG_OUTPUT_SYNCHRONOUS);

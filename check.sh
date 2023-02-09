@@ -1,5 +1,6 @@
 #!/bin/sh
 
+set -ex
 # wasm32-unknown-unknown build-able crates are egui_window_winit, egui_render_wgpu, egui_render_glow, egui_render_three_d, winit_wgpu
 # wasm32-unknown-emscripten crates are egui_window_sdl2, egui_render_glow, egui_render_three_d
 # all are desktop crates
@@ -25,7 +26,7 @@ cargo clippy -p egui_window_winit -p egui_render_wgpu -p egui_render_glow -p egu
 echo "build"
 cargo build -p egui_window_winit -p egui_render_wgpu -p egui_render_glow -p egui_render_three_d -p winit_wgpu --target=wasm32-unknown-unknown
 
-
+# emscripten commands
 echo "starting emscripten list"
 echo "check"
 cargo check -p egui_window_sdl2 -p egui_render_glow -p egui_render_three_d --target=wasm32-unknown-emscripten
