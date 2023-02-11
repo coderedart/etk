@@ -12,10 +12,13 @@ struct App {
     frame_count: usize,
     egui_context: egui::Context,
     wgpu_backend: WgpuBackend,
+    window_backend: WinitBackend,
 }
 
-impl EguiUserApp<WinitBackend> for App {
-    fn gui_run(&mut self, egui_context: &egui::Context, _window_backend: &mut WinitBackend) {
+impl EguiUserApp for App {
+    fn gui_run(&mut self) {
+        let egui_context = self.egui_context.clone();
+        let egui_context = &&egui_context;
         // draw a triangle
         self.draw_triangle();
         Window::new("egui user window").show(egui_context, |ui| {
@@ -28,16 +31,24 @@ impl EguiUserApp<WinitBackend> for App {
 
     type UserGfxBackend = WgpuBackend;
 
-    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend {
-        &mut self.wgpu_backend
-    }
+    type UserWindowBackend = WinitBackend;
 
-    fn get_egui_context(&mut self) -> egui::Context {
-        self.egui_context.clone()
+    fn get_all(
+        &mut self,
+    ) -> (
+        &mut Self::UserWindowBackend,
+        &mut Self::UserGfxBackend,
+        &egui::Context,
+    ) {
+        (
+            &mut self.window_backend,
+            &mut self.wgpu_backend,
+            &self.egui_context,
+        )
     }
 }
 impl App {
-    pub fn new(wgpu_backend: WgpuBackend) -> Self {
+    pub fn new(wgpu_backend: WgpuBackend, window_backend: WinitBackend) -> Self {
         let device = wgpu_backend.device.clone();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
@@ -75,6 +86,7 @@ impl App {
             frame_count: 0,
             egui_context: Default::default(),
             wgpu_backend,
+            window_backend,
         }
     }
 
@@ -127,8 +139,8 @@ pub fn fake_main() {
     let mut window_backend = WinitBackend::new(Default::default(), Default::default());
 
     let wgpu_backend = WgpuBackend::new(&mut window_backend, Default::default());
-    let app = App::new(wgpu_backend);
-    window_backend.run_event_loop(app);
+    let app = App::new(wgpu_backend, window_backend);
+    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {

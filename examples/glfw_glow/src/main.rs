@@ -7,29 +7,92 @@ struct App {
     bg_color: egui::Color32,
     egui_context: egui::Context,
     glow_backend: GlowBackend,
+    glfw_backend: GlfwBackend,
 }
 impl App {
-    pub fn new(tdb: GlowBackend) -> Self {
+    pub fn new(tdb: GlowBackend, glfw_backend: GlfwBackend) -> Self {
         Self {
             frame_count: 0,
             bg_color: egui::Color32::LIGHT_BLUE,
             egui_context: Default::default(),
             glow_backend: tdb,
+            glfw_backend,
         }
     }
 }
-impl EguiUserApp<GlfwBackend> for App {
+impl EguiUserApp for App {
     type UserGfxBackend = GlowBackend;
 
-    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend {
-        &mut self.glow_backend
+    type UserWindowBackend = GlfwBackend;
+
+    fn get_all(
+        &mut self,
+    ) -> (
+        &mut Self::UserWindowBackend,
+        &mut Self::UserGfxBackend,
+        &egui::Context,
+    ) {
+        (
+            &mut self.glfw_backend,
+            &mut self.glow_backend,
+            &self.egui_context,
+        )
     }
 
-    fn get_egui_context(&mut self) -> egui::Context {
-        self.egui_context.clone()
+    fn resize_framebuffer(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.resize_framebuffer(wb);
     }
 
-    fn gui_run(&mut self, egui_context: &egui::Context, _window_backend: &mut GlfwBackend) {
+    fn resume(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.resume(wb);
+    }
+
+    fn suspend(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.suspend(wb);
+    }
+
+    fn run(
+        &mut self,
+        logical_size: [f32; 2],
+    ) -> Option<(egui::PlatformOutput, std::time::Duration)> {
+        let (wb, gb, egui_context) = self.get_all();
+        let egui_context = egui_context.clone();
+        // don't bother doing anything if there's no window
+        if let Some(full_output) = if wb.get_window().is_some() {
+            let input = wb.get_raw_input();
+            gb.prepare_frame(wb);
+            egui_context.begin_frame(input);
+            self.gui_run();
+            Some(egui_context.end_frame())
+        } else {
+            None
+        } {
+            let egui::FullOutput {
+                platform_output,
+                repaint_after,
+                textures_delta,
+                shapes,
+            } = full_output;
+            let (wb, gb, egui_context) = self.get_all();
+            let egui_context = egui_context.clone();
+
+            gb.render_egui(
+                egui_context.tessellate(shapes),
+                textures_delta,
+                logical_size,
+            );
+            gb.present(wb);
+            return Some((platform_output, repaint_after));
+        }
+        None
+    }
+
+    fn gui_run(&mut self) {
+        let egui_context = self.egui_context.clone();
+        let egui_context = &egui_context;
         Window::new("egui user window").show(egui_context, |ui| {
             ui.label("hello");
             ui.label(format!("frame number: {}", self.frame_count));
@@ -70,8 +133,8 @@ pub fn fake_main() {
     };
     let mut window_backend = GlfwBackend::new(config, BackendConfig {});
     let glow_backend = GlowBackend::new(&mut window_backend, Default::default());
-    let app = App::new(glow_backend);
-    window_backend.run_event_loop(app);
+    let app = App::new(glow_backend, window_backend);
+    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {

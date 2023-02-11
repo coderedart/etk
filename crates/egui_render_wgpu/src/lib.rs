@@ -187,7 +187,7 @@ impl SurfaceManager {
                 }
             }
             if !compatible_format_found {
-                tracing::error!(
+                tracing::info!(
                     "could not find compatible surface format from user provided formats."
                 );
                 self.surface_config.format = supported_formats

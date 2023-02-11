@@ -7,29 +7,40 @@ struct App {
     bg_color: egui::Color32,
     egui_context: egui::Context,
     glow_backend: GlowBackend,
+    window_backend: Sdl2Backend,
 }
 impl App {
-    pub fn new(tdb: GlowBackend) -> Self {
+    pub fn new(tdb: GlowBackend, window_backend: Sdl2Backend) -> Self {
         Self {
             frame_count: 0,
             bg_color: egui::Color32::LIGHT_BLUE,
             egui_context: Default::default(),
             glow_backend: tdb,
+            window_backend,
         }
     }
 }
-impl EguiUserApp<Sdl2Backend> for App {
+impl EguiUserApp for App {
     type UserGfxBackend = GlowBackend;
 
-    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend {
-        &mut self.glow_backend
-    }
+    type UserWindowBackend = Sdl2Backend;
 
-    fn get_egui_context(&mut self) -> egui::Context {
-        self.egui_context.clone()
+    fn get_all(
+        &mut self,
+    ) -> (
+        &mut Self::UserWindowBackend,
+        &mut Self::UserGfxBackend,
+        &egui::Context,
+    ) {
+        (
+            &mut self.window_backend,
+            &mut self.glow_backend,
+            &self.egui_context,
+        )
     }
-
-    fn gui_run(&mut self, egui_context: &egui::Context, _window_backend: &mut Sdl2Backend) {
+    fn gui_run(&mut self) {
+        let egui_context = self.egui_context.clone();
+        let egui_context = &egui_context;
         Window::new("egui user window").show(egui_context, |ui| {
             ui.label("hello");
             ui.label(format!("frame number: {}", self.frame_count));
@@ -74,8 +85,8 @@ pub fn fake_main() {
     };
     let mut window_backend = Sdl2Backend::new(config, BackendConfig {});
     let glow_backend = GlowBackend::new(&mut window_backend, Default::default());
-    let app = App::new(glow_backend);
-    window_backend.run_event_loop(app);
+    let app = App::new(glow_backend, window_backend);
+    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {

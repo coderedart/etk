@@ -168,42 +168,42 @@ impl WindowBackend for GlfwBackend {
         self.take_raw_input()
     }
 
-    fn run_event_loop<U: EguiUserApp<Self> + 'static>(self, user_app: U) {
-        // this is to make sure that user_app is dropped FIRST and then self.
-        // we want the swapchain/surface to be destroyed before the window :) otherwise, we get a segfault.
-        let mut tuple = (user_app, self);
-
+    fn run_event_loop<U: EguiUserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
         let mut wait_events_duration = std::time::Duration::ZERO;
         let callback = move || {
-            let (user_app, window_backend) = &mut tuple;
+            let window_backend = user_app.get_all().0;
             window_backend
                 .glfw
                 .wait_events_timeout(wait_events_duration.as_secs_f64());
 
             // gather events
             window_backend.tick();
+
             if window_backend.resized_event_pending {
-                user_app.resize_framebuffer(window_backend);
-                window_backend.resized_event_pending = false;
+                user_app.resize_framebuffer();
+                user_app.get_all().0.resized_event_pending = false;
             }
+            let window_backend = user_app.get_all().0;
             let logical_size = [
                 window_backend.framebuffer_size_physical[0] as f32 / window_backend.scale[0],
                 window_backend.framebuffer_size_physical[1] as f32 / window_backend.scale[1],
             ];
             // run userapp gui function. let user do anything he wants with window or gfx backends
-            if let Some((platform_output, timeout)) = user_app.run(logical_size, window_backend) {
+            if let Some((platform_output, timeout)) = user_app.run(logical_size) {
                 wait_events_duration = timeout.min(std::time::Duration::from_secs(1));
                 if !platform_output.copied_text.is_empty() {
-                    window_backend
+                    user_app
+                        .get_all()
+                        .0
                         .window
                         .set_clipboard_string(&platform_output.copied_text);
                 }
-                window_backend.set_cursor(platform_output.cursor_icon);
+                user_app.get_all().0.set_cursor(platform_output.cursor_icon);
             } else {
                 wait_events_duration = std::time::Duration::ZERO;
             }
             #[cfg(not(target_os = "emscripten"))]
-            window_backend.window.should_close()
+            user_app.get_all().0.window.should_close()
         };
         // on emscripten, just keep calling forever i guess.
         #[cfg(target_os = "emscripten")]

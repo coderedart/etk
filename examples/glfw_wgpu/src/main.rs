@@ -18,11 +18,29 @@ struct App {
     is_window_receiving_events: bool,
     egui_context: egui::Context,
     wgpu_backend: WgpuBackend,
+    glfw_backend: GlfwBackend,
 }
 
-impl EguiUserApp<GlfwBackend> for App {
-    fn gui_run(&mut self, egui_context: &egui::Context, window_backend: &mut GlfwBackend) {
+impl EguiUserApp for App {
+    type UserWindowBackend = GlfwBackend;
+
+    fn get_all(
+        &mut self,
+    ) -> (
+        &mut Self::UserWindowBackend,
+        &mut Self::UserGfxBackend,
+        &egui::Context,
+    ) {
+        (
+            &mut self.glfw_backend,
+            &mut self.wgpu_backend,
+            &self.egui_context,
+        )
+    }
+    fn gui_run(&mut self) {
         self.frame_count += 1;
+        let egui_context = self.egui_context.clone();
+        let egui_context = &&egui_context;
         // draw a triangle
         self.draw_triangle();
         Window::new("egui user window").show(egui_context, |ui| {
@@ -35,13 +53,16 @@ impl EguiUserApp<GlfwBackend> for App {
             ui.checkbox(&mut self.egui_wants_input, "Does egui want input?");
         });
 
-        self.is_window_receiving_events = !window_backend.window.is_mouse_passthrough();
+        self.is_window_receiving_events = !self.glfw_backend.window.is_mouse_passthrough();
+        if !self.is_window_receiving_events {
+            egui_context.request_repaint();
+        }
         // don't forget to only ask egui if it wants input AFTER ending the frame
         self.egui_wants_input =
             egui_context.wants_pointer_input() || egui_context.wants_keyboard_input();
         // if window is receiving events when egui doesn't want input. or if window not receiving events when egui wants input.
         if self.is_window_receiving_events != self.egui_wants_input {
-            window_backend
+            self.glfw_backend
                 .window
                 .set_mouse_passthrough(!self.egui_wants_input); // passthrough means not receiving events. so, if egui wants input, we set passthrough to false. otherwise true.
         }
@@ -49,18 +70,61 @@ impl EguiUserApp<GlfwBackend> for App {
 
     type UserGfxBackend = WgpuBackend;
 
-    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend {
-        &mut self.wgpu_backend
+    fn resize_framebuffer(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.resize_framebuffer(wb);
     }
 
-    fn get_egui_context(&mut self) -> egui::Context {
-        self.egui_context.clone()
+    fn resume(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.resume(wb);
+    }
+
+    fn suspend(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.suspend(wb);
+    }
+
+    fn run(
+        &mut self,
+        logical_size: [f32; 2],
+    ) -> Option<(egui::PlatformOutput, std::time::Duration)> {
+        let (wb, gb, egui_context) = self.get_all();
+        let egui_context = egui_context.clone();
+        // don't bother doing anything if there's no window
+        if let Some(full_output) = if wb.get_window().is_some() {
+            let input = wb.get_raw_input();
+            gb.prepare_frame(wb);
+            egui_context.begin_frame(input);
+            self.gui_run();
+            Some(egui_context.end_frame())
+        } else {
+            None
+        } {
+            let egui::FullOutput {
+                platform_output,
+                repaint_after,
+                textures_delta,
+                shapes,
+            } = full_output;
+            let (wb, gb, egui_context) = self.get_all();
+            let egui_context = egui_context.clone();
+
+            gb.render_egui(
+                egui_context.tessellate(shapes),
+                textures_delta,
+                logical_size,
+            );
+            gb.present(wb);
+            return Some((platform_output, repaint_after));
+        }
+        None
     }
 }
 impl App {
-    pub fn new(window_backend: &mut GlfwBackend) -> Self {
+    pub fn new(mut glfw_backend: GlfwBackend) -> Self {
         let wgpu_backend = WgpuBackend::new(
-            window_backend,
+            &mut glfw_backend,
             WgpuConfig {
                 backends: Backends::VULKAN,
                 ..Default::default()
@@ -107,6 +171,7 @@ impl App {
             is_window_receiving_events: false,
             egui_context: Default::default(),
             wgpu_backend,
+            glfw_backend,
         }
     }
 
@@ -166,7 +231,7 @@ pub fn fake_main() {
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let mut window_backend = GlfwBackend::new(
+    let window_backend = GlfwBackend::new(
         GlfwConfig {
             glfw_callback: Box::new(|glfw_context| {
                 // make the window that will be created transparent.
@@ -183,8 +248,8 @@ pub fn fake_main() {
         BackendConfig {},
     );
 
-    let app = App::new(&mut window_backend);
-    window_backend.run_event_loop(app);
+    let app = App::new(window_backend);
+    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {

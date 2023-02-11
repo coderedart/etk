@@ -160,13 +160,17 @@ impl WindowBackend for WinitBackend {
         }
     }
 
-    fn run_event_loop<U: EguiUserApp<Self> + 'static>(mut self, user_app: U) {
-        let el = self.event_loop.take().expect("event loop missing");
-        let mut tuple = (self, user_app);
+    fn run_event_loop<U: EguiUserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
+        let el = user_app
+            .get_all()
+            .0
+            .event_loop
+            .take()
+            .expect("event loop missing");
+
         let mut suspended = true;
         let mut events_wait_duration = std::time::Duration::ZERO;
         el.run(move |event, _event_loop, control_flow| {
-            let (window_backend, user_app) = &mut tuple;
             match event {
                 event::Event::Suspended => {
                     suspended = true;
@@ -193,37 +197,41 @@ impl WindowBackend for WinitBackend {
                         );
                         user_app.resume(window_backend);
                     }
-                    let framebuffer_size_physical = window_backend
+                    let framebuffer_size_physical = user_app
+                        .get_all()
+                        .0
                         .window
                         .as_ref()
                         .expect("failed to get size of window after resume event")
                         .inner_size();
 
-                    window_backend.framebuffer_size = [
+                    user_app.get_all().0.framebuffer_size = [
                         framebuffer_size_physical.width,
                         framebuffer_size_physical.height,
                     ];
-                    user_app.resize_framebuffer(window_backend);
-                    window_backend.scale = window_backend
+                    user_app.resize_framebuffer();
+                    user_app.get_all().0.scale = user_app
+                        .get_all()
+                        .0
                         .window
                         .as_ref()
                         .expect("failed to get scale of window after resume event")
                         .scale_factor() as f32;
-                    let window_size =
-                        framebuffer_size_physical.to_logical::<f32>(window_backend.scale as f64);
-                    window_backend.raw_input = RawInput {
+                    let window_size = framebuffer_size_physical
+                        .to_logical::<f32>(user_app.get_all().0.scale as f64);
+                    user_app.get_all().0.raw_input = RawInput {
                         screen_rect: Some(Rect::from_two_pos(
                             [0.0, 0.0].into(),
                             [window_size.width, window_size.height].into(),
                         )),
-                        pixels_per_point: Some(window_backend.scale),
+                        pixels_per_point: Some(user_app.get_all().0.scale),
                         ..Default::default()
                     };
                 }
                 event::Event::MainEventsCleared => {
                     // no point in redrawing if we are suspended.
                     if !suspended {
-                        if let Some(window) = window_backend.window.as_ref() {
+                        if let Some(window) = user_app.get_all().0.window.as_ref() {
                             window.request_redraw()
                         }
                     }
@@ -232,26 +240,26 @@ impl WindowBackend for WinitBackend {
                 event::Event::RedrawRequested(_) => {
                     if !suspended {
                         // take egui input
-                        if window_backend.latest_resize_event {
-                            user_app.resize_framebuffer(window_backend);
-                            window_backend.latest_resize_event = false;
+                        if user_app.get_all().0.latest_resize_event {
+                            user_app.resize_framebuffer();
+                            user_app.get_all().0.latest_resize_event = false;
                         }
                         // begin egui with input
                         let logical_size = [
-                            window_backend.framebuffer_size[0] as f32 / window_backend.scale,
-                            window_backend.framebuffer_size[1] as f32 / window_backend.scale,
+                            user_app.get_all().0.framebuffer_size[0] as f32
+                                / user_app.get_all().0.scale,
+                            user_app.get_all().0.framebuffer_size[1] as f32
+                                / user_app.get_all().0.scale,
                         ];
                         // run userapp gui function. let user do anything he wants with window or gfx backends
-                        if let Some((_platform_output, timeout)) =
-                            user_app.run(logical_size, window_backend)
-                        {
+                        if let Some((_platform_output, timeout)) = user_app.run(logical_size) {
                             events_wait_duration = timeout;
                         }
                     }
                 }
-                rest => window_backend.handle_event(rest),
+                rest => user_app.get_all().0.handle_event(rest),
             }
-            if window_backend.should_close {
+            if user_app.get_all().0.should_close {
                 *control_flow = ControlFlow::Exit;
             } else {
                 control_flow.set_wait_timeout(events_wait_duration);

@@ -65,7 +65,7 @@ pub trait WindowBackend: Sized {
     fn get_raw_input(&mut self) -> RawInput;
     /// Run the event loop. different backends run it differently, so they all need to take care and
     /// call the Gfx or UserApp functions at the right time.
-    fn run_event_loop<U: EguiUserApp<Self> + 'static>(self, user_app: U);
+    fn run_event_loop<U: EguiUserApp<UserWindowBackend = Self> + 'static>(user_app: U);
     /// config if GfxBackend needs them. usually tells the GfxBackend whether we have an opengl or non-opengl window.
     /// for example, if a vulkan backend gets a window with opengl, it can gracefully panic instead of probably segfaulting.
     /// this also serves as an indicator for opengl gfx backends, on whether this backend supports `swap_buffers` or `get_proc_address` functions.
@@ -139,51 +139,63 @@ pub trait GfxBackend {
 /// This is the trait most users care about. we already have a bunch of default implementations. override them for more advanced usage.
 /// We assume that user will provide egui context as well as the gfx backend. This allows user to have maximum control on how they behave.
 ///
-pub trait EguiUserApp<WB: WindowBackend> {
+pub trait EguiUserApp {
     ///
     type UserGfxBackend: GfxBackend;
-
-    fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend;
-    fn get_egui_context(&mut self) -> egui::Context;
-    fn resize_framebuffer(&mut self, window_backend: &mut WB) {
-        self.get_gfx_backend().resize_framebuffer(window_backend);
-    }
-    fn resume(&mut self, window_backend: &mut WB) {
-        self.get_gfx_backend().resume(window_backend);
-    }
-    fn suspend(&mut self, window_backend: &mut WB) {
-        self.get_gfx_backend().suspend(window_backend);
-    }
-    fn run(
+    type UserWindowBackend: WindowBackend;
+    fn get_all(
         &mut self,
-        logical_size: [f32; 2],
-        window_backend: &mut WB,
-    ) -> Option<(PlatformOutput, Duration)> {
+    ) -> (
+        &mut Self::UserWindowBackend,
+        &mut Self::UserGfxBackend,
+        &egui::Context,
+    );
+    fn resize_framebuffer(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.resize_framebuffer(wb);
+    }
+    fn resume(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.resume(wb);
+    }
+    fn suspend(&mut self) {
+        let (wb, gb, _) = self.get_all();
+        gb.suspend(wb);
+    }
+    fn run(&mut self, logical_size: [f32; 2]) -> Option<(PlatformOutput, Duration)> {
+        let (wb, gb, egui_context) = self.get_all();
+        let egui_context = egui_context.clone();
         // don't bother doing anything if there's no window
-        if window_backend.get_window().is_some() {
-            let egui_context = self.get_egui_context();
-            let input = window_backend.get_raw_input();
-            self.get_gfx_backend().prepare_frame(window_backend);
+        if let Some(full_output) = if wb.get_window().is_some() {
+            let input = wb.get_raw_input();
+            gb.prepare_frame(wb);
             egui_context.begin_frame(input);
-            self.gui_run(&egui_context, window_backend);
+            self.gui_run();
+            Some(egui_context.end_frame())
+        } else {
+            None
+        } {
             let FullOutput {
                 platform_output,
                 repaint_after,
                 textures_delta,
                 shapes,
-            } = egui_context.end_frame();
-            self.get_gfx_backend().render_egui(
+            } = full_output;
+            let (wb, gb, egui_context) = self.get_all();
+            let egui_context = egui_context.clone();
+
+            gb.render_egui(
                 egui_context.tessellate(shapes),
                 textures_delta,
                 logical_size,
             );
-            self.get_gfx_backend().present(window_backend);
+            gb.present(wb);
             return Some((platform_output, repaint_after));
         }
         None
     }
     /// This is the only function user needs to implement. this function will be called every frame.
-    fn gui_run(&mut self, egui_context: &egui::Context, window_backend: &mut WB);
+    fn gui_run(&mut self);
 }
 
 /// Some nice util functions commonly used by egui backends.
