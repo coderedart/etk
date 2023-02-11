@@ -321,12 +321,14 @@ impl WinitBackend {
                         event::ElementState::Pressed => true,
                         event::ElementState::Released => false,
                     };
+
                     if let Some(key_code) = input.virtual_keycode {
                         if let Some(egui_key) = winit_key_to_egui(key_code) {
                             Some(Event::Key {
                                 key: egui_key,
                                 pressed,
                                 modifiers: self.modifiers,
+                                repeat: false,
                             })
                         } else {
                             None

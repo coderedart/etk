@@ -15,12 +15,10 @@ This can be a low level graphics like `opengl`, `vulkan` etc.. or higher level a
 ### Eframe
 egui already has an official backend crate called `eframe`. It uses winit on desktop and a custom written js-based backend on web. 
 If winit works good enough, it is recommended to stick to eframe. 
-But crates like egui-glow, egui-wgpu, wgui-winit have a weird dependency relationship which are not cleanly separated. So, if you someone is writing a sdl2 integration, reusing egui-glow/egui-wgpu crates feels much more clunky compared to a writing a winit integration.
-
 
 ### Usecases
 #### Workaround bugs using alternate backends
-If you are using winit, and suddenly some users are complaining about a crash on some specific configuration like fedora + nvidia. Now, if you raise an issue, we have no idea how long it will take to fix that crash. So, you immediately switch the backend to some alternative window backend like `glfw` which might not have this specific bug. This can be released as a different version or you can include both backends and based on user configuration, decide at startup which backend to use. 
+If you are using winit, and suddenly some users are complaining about a crash on some specific configuration like fedora + nvidia. we have no idea how long it will take to fix that crash upstream. So, you immediately switch the backend to some alternative window backend like `glfw` which might not have this specific bug. This can be released as a different version or you can include both backends and based on user configuration, decide at startup which backend to use. 
 If you realized that it was a vulkan bug, you can immediately switch to an opengl backend too in that same way as above.
 
 #### Expose internals
@@ -36,7 +34,6 @@ egui_backend is trying to separate out the api boundaries using traits. This wil
 
 ### Limitations
 There are some features which are explicitly excluded to keep this simple. 
-1. no multiple windows. gfx and window apis need to sync window and swapchain lifecycle synchronization. niche requirement which shouldn't affect the ergonomics of the vast majority of users.
-2. no android support. android is the only platform, where a window will be destroyed during app suspend, leading to times where there's no window at all. same problem is above with syncing swapchain too.
+1. no multiple windows. gfx and window apis need to sync window and swapchain lifecycle synchronization. This is niche requirement which shouldn't affect the ergonomics of the vast majority of other users.
 
-For now, we will just assume that there's only one window, created at startup and destroyed at shutdown of app.
+For now, we will just assume that there's atmost one window at any point in the app's lifecycle.

@@ -297,7 +297,10 @@ impl Sdl2Backend {
                 _ => None,
             },
             sdl2::event::Event::KeyDown {
-                scancode, keymod, ..
+                scancode,
+                keymod,
+                repeat,
+                ..
             } => {
                 let scan_code = scancode.expect("scan code empty");
                 let modifiers = sdl_to_egui_modifiers(keymod);
@@ -338,12 +341,16 @@ impl Sdl2Backend {
                         key,
                         pressed: true,
                         modifiers,
+                        repeat,
                     })
                 })
             }
 
             sdl2::event::Event::KeyUp {
-                scancode, keymod, ..
+                scancode,
+                keymod,
+                repeat,
+                ..
             } => {
                 let scan_code = scancode.expect("scan code empty");
                 let modifiers = sdl_to_egui_modifiers(keymod);
@@ -382,6 +389,7 @@ impl Sdl2Backend {
                         key,
                         pressed: false,
                         modifiers,
+                        repeat,
                     })
                 })
             }

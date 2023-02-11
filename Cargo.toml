@@ -16,7 +16,7 @@ passthrough = ["dep:egui_window_glfw_passthrough"]
 tracing = { version = "*" }
 tracing-subscriber = { version = "*" }
 egui_backend = { path = "crates/egui_backend" }
-egui = { version = "*" }
+egui = { version = "0.21.0" }
 console_error_panic_hook = "0.1.6"
 tracing-wasm = "*"
 egui_window_winit = { version = "*", path = "crates/egui_window_winit" }

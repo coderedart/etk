@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wgpu = { version = "0.15.0", features = ["webgl"] }
-pollster = { version = "0.2" }
+wgpu = { version = "0.15.1", features = ["webgl", "emscripten"] }
+pollster = { version = "0.3.0" }
 tracing = { version = "0.1" }
 intmap = { version = "2.0" }
 bytemuck = { version = "1.12" }

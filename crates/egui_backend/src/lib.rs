@@ -137,7 +137,10 @@ pub trait GfxBackend {
 }
 
 /// This is the trait most users care about. we already have a bunch of default implementations. override them for more advanced usage.
+/// We assume that user will provide egui context as well as the gfx backend. This allows user to have maximum control on how they behave.
+///
 pub trait EguiUserApp<WB: WindowBackend> {
+    ///
     type UserGfxBackend: GfxBackend;
 
     fn get_gfx_backend(&mut self) -> &mut Self::UserGfxBackend;
@@ -185,27 +188,7 @@ pub trait EguiUserApp<WB: WindowBackend> {
 
 /// Some nice util functions commonly used by egui backends.
 pub mod util {
-    /// /// For wgpu, dx, metal, use [`scissor_from_clip_rect`]..
-    ///
-    /// **NOTE**:
-    /// egui coordinates are in logical window space with top left being [0, 0].
-    /// In opengl, bottom left is [0, 0].
-    /// so, we need to use bottom left clip-rect coordinate as x,y instead of top left.
-    /// 1. bottom left corner's y coordinate is simply top left corner's y added with clip rect height
-    /// 2. but this `y` is represents top border + y units. in opengl, we need units from bottom border  
-    /// 3. we know that for any point y, distance between top and y + distance between bottom and y gives us total height
-    /// 4. so, height - y units from top gives us y units from bottom.
-    /// math is suprisingly hard to write down.. just draw it on a paper, it makes sense.
-    pub fn scissor_from_clip_rect_opengl(
-        clip_rect: &egui::Rect,
-        scale: f32,
-        physical_framebuffer_size: [u32; 2],
-    ) -> Option<[u32; 4]> {
-        scissor_from_clip_rect(clip_rect, scale, physical_framebuffer_size).map(|mut arr| {
-            arr[1] = physical_framebuffer_size[1] - (arr[1] + arr[3]);
-            arr
-        })
-    }
+
     /// input: clip rectangle in logical pixels, scale and framebuffer size in physical pixels
     /// we will get [x, y, width, height] of the scissor rectangle.
     ///
@@ -250,5 +233,26 @@ pub mod util {
         let height = (clip_max_y - clip_min_y) as u32;
         // return only if scissor width/height are not zero. otherwise, no need for a scissor rect at all
         (width != 0 && height != 0).then_some([x, y, width, height])
+    }
+    /// For wgpu, dx, metal, use [`scissor_from_clip_rect`]..
+    ///
+    /// **NOTE**:
+    /// egui coordinates are in logical window space with top left being [0, 0].
+    /// In opengl, bottom left is [0, 0].
+    /// so, we need to use bottom left clip-rect coordinate as x,y instead of top left.
+    /// 1. bottom left corner's y coordinate is simply top left corner's y added with clip rect height
+    /// 2. but this `y` is represents top border + y units. in opengl, we need units from bottom border  
+    /// 3. we know that for any point y, distance between top and y + distance between bottom and y gives us total height
+    /// 4. so, height - y units from top gives us y units from bottom.
+    /// math is suprisingly hard to write down.. just draw it on a paper, it makes sense.
+    pub fn scissor_from_clip_rect_opengl(
+        clip_rect: &egui::Rect,
+        scale: f32,
+        physical_framebuffer_size: [u32; 2],
+    ) -> Option<[u32; 4]> {
+        scissor_from_clip_rect(clip_rect, scale, physical_framebuffer_size).map(|mut arr| {
+            arr[1] = physical_framebuffer_size[1] - (arr[1] + arr[3]);
+            arr
+        })
     }
 }

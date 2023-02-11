@@ -275,7 +275,7 @@ impl GlfwBackend {
                             y: self.cursor_pos_physical_pixels[1] / self.scale[1],
                         },
                         button: glfw_to_egui_pointer_button(mb),
-                        pressed: glfw_to_egui_action(a),
+                        pressed: glfw_to_egui_action(a).unwrap_or_default(),
                         modifiers: glfw_to_egui_modifers(m),
                     };
                     Some(emb)
@@ -286,21 +286,27 @@ impl GlfwBackend {
                 }
                 glfw::WindowEvent::Key(k, _, a, m) => match k {
                     glfw::Key::C => {
-                        if glfw_to_egui_action(a) && m.contains(glfw::Modifiers::Control) {
+                        if glfw_to_egui_action(a).unwrap_or_default()
+                            && m.contains(glfw::Modifiers::Control)
+                        {
                             Some(Event::Copy)
                         } else {
                             None
                         }
                     }
                     glfw::Key::X => {
-                        if glfw_to_egui_action(a) && m.contains(glfw::Modifiers::Control) {
+                        if glfw_to_egui_action(a).unwrap_or_default()
+                            && m.contains(glfw::Modifiers::Control)
+                        {
                             Some(Event::Cut)
                         } else {
                             None
                         }
                     }
                     glfw::Key::V => {
-                        if glfw_to_egui_action(a) && m.contains(glfw::Modifiers::Control) {
+                        if glfw_to_egui_action(a).unwrap_or_default()
+                            && m.contains(glfw::Modifiers::Control)
+                        {
                             Some(Event::Text(
                                 self.window.get_clipboard_string().unwrap_or_default(),
                             ))
@@ -311,10 +317,15 @@ impl GlfwBackend {
                     _ => None,
                 }
                 .or_else(|| {
-                    glfw_to_egui_key(k).map(|key| Event::Key {
-                        key,
-                        pressed: glfw_to_egui_action(a),
-                        modifiers: glfw_to_egui_modifers(m),
+                    glfw_to_egui_key(k).map(|key| {
+                        let pressed = glfw_to_egui_action(a);
+                        let repeat = pressed.is_none();
+                        Event::Key {
+                            key,
+                            pressed: pressed.unwrap_or_default(),
+                            modifiers: glfw_to_egui_modifers(m),
+                            repeat,
+                        }
                     })
                 }),
                 glfw::WindowEvent::Char(c) => Some(Event::Text(c.to_string())),
@@ -494,12 +505,13 @@ pub fn glfw_to_egui_pointer_button(mb: glfw::MouseButton) -> PointerButton {
         _ => PointerButton::Secondary,
     }
 }
-
-pub fn glfw_to_egui_action(a: glfw::Action) -> bool {
+/// will return true if pressed, false if released and None if repeat
+/// this allows us to use `unwrap_or_default` to get pressed as false when we get a key repeat event
+pub fn glfw_to_egui_action(a: glfw::Action) -> Option<bool> {
     match a {
-        Action::Release => false,
-        Action::Press => true,
-        Action::Repeat => true,
+        Action::Release => Some(false),
+        Action::Press => Some(true),
+        Action::Repeat => None,
     }
 }
 /// This converts egui's cursor  icon into glfw's cursor which can be set by glfw.
