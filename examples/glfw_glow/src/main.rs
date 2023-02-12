@@ -99,6 +99,8 @@ impl EguiUserApp for App {
             ui.label(format!("{:#?}", egui_context.pointer_latest_pos()));
             self.frame_count += 1;
             ui.color_edit_button_srgba(&mut self.bg_color);
+            let i = egui_context.input(|i| i.clone());
+            i.ui(ui);
             // let input = egui_context.input().clone();
             // input.ui(ui);
         });
@@ -133,6 +135,7 @@ pub fn fake_main() {
     };
     let mut window_backend = GlfwBackend::new(config, BackendConfig {});
     let glow_backend = GlowBackend::new(&mut window_backend, Default::default());
+    dbg!(window_backend.window.get_content_scale());
     let app = App::new(glow_backend, window_backend);
     <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
 }

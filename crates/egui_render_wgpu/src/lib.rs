@@ -63,7 +63,10 @@ pub struct WgpuConfig {
     pub backends: Backends,
     pub power_preference: PowerPreference,
     pub device_descriptor: DeviceDescriptor<'static>,
+    /// If not empty, We will try to iterate over this vector and use the first format that is supported by the surface.
+    /// If this is empty or none of the formats in this vector are supported, we will just use the first supported format of the surface. 
     pub surface_formats_priority: Vec<TextureFormat>,
+    /// we will try to use this config if supported. otherwise, the surface recommended options will be used.   
     pub surface_config: SurfaceConfiguration,
 }
 impl Default for WgpuConfig {
@@ -187,9 +190,11 @@ impl SurfaceManager {
                 }
             }
             if !compatible_format_found {
-                tracing::info!(
-                    "could not find compatible surface format from user provided formats."
-                );
+                if !self.surface_formats_priority.is_empty() {
+                    tracing::warn!(
+                        "could not find compatible surface format from user provided formats. choosing first supported format instead"
+                    );
+                }
                 self.surface_config.format = supported_formats
                     .iter()
                     .find(|f| f.describe().srgb)

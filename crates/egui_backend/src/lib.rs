@@ -23,13 +23,14 @@
 //!
 //! look at the docs of the relevant trait to learn more.
 
-use std::time::Duration;
-
+mod egui_api;
+// #[cfg(target_feature = "egui")]
 pub use egui;
-pub use raw_window_handle;
-
+// #[cfg(target_feature = "egui")]
 use egui::{ClippedPrimitive, FullOutput, PlatformOutput, RawInput, TexturesDelta};
+pub use raw_window_handle;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use std::time::Duration;
 
 /// Intended to provide a common struct which all window backends accept as their configuration.
 /// In future, might add more options like initial window size/title etc..

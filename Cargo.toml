@@ -32,6 +32,8 @@ target_sdk_version = 33
 
 [workspace]
 members = [
+    "crates/window_backend",
+    "crates/render_backend",
     "crates/egui_backend",
     "crates/egui_window_glfw_passthrough",
     "crates/egui_window_winit",
