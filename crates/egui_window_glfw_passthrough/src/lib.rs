@@ -354,10 +354,11 @@ impl GlfwBackend {
                 glfw::WindowEvent::CursorPos(x, y) => {
                     self.cursor_inside_bounds = true;
                     cursor_event = true;
-                    
-                    self.cursor_pos_physical_pixels =
-                        [x as f32 , y as f32 ];
-                    Some(egui::Event::PointerMoved([x as f32 / self.scale[0], y as f32 / self.scale[1]].into()))
+
+                    self.cursor_pos_physical_pixels = [x as f32, y as f32];
+                    Some(egui::Event::PointerMoved(
+                        [x as f32 / self.scale[0], y as f32 / self.scale[1]].into(),
+                    ))
                 }
                 WindowEvent::CursorEnter(c) => {
                     self.cursor_inside_bounds = c;

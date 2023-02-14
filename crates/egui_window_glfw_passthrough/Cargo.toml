@@ -16,5 +16,5 @@ image = ["glfw/image"]
 
 [dependencies]
 egui_backend = { version = "*", path = "../egui_backend" }
-glfw = { version = "0.50.0", package = "glfw-passthrough" , default-features = false}
+glfw = { version = "0.51.0", package = "glfw-passthrough" , default-features = false}
 tracing = { version = "0.1" }

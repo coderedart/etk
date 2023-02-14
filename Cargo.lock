@@ -759,9 +759,9 @@ checksum = "221996f774192f0f718773def8201c4ae31f02616a54ccfc2d358bb0e5cefdec"
 
 [[package]]
 name = "glfw-passthrough"
-version = "0.50.0"
+version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80973c7fb63672686df992edc73e3f32571dc7d72ce95c9c94c23be55dc7b55a"
+checksum = "a532792ccbc7313373ad34138cc5e967ac87ea6653fe02d126de6a9c540baba6"
 dependencies = [
  "ash",
  "bitflags",
