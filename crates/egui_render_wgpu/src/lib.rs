@@ -6,6 +6,7 @@ use egui::{
 use egui_backend::egui;
 use egui_backend::{GfxBackend, WindowBackend};
 use intmap::IntMap;
+use raw_window_handle::HasRawWindowHandle;
 use std::{
     convert::TryInto,
     num::{NonZeroU32, NonZeroU64},
@@ -64,7 +65,7 @@ pub struct WgpuConfig {
     pub power_preference: PowerPreference,
     pub device_descriptor: DeviceDescriptor<'static>,
     /// If not empty, We will try to iterate over this vector and use the first format that is supported by the surface.
-    /// If this is empty or none of the formats in this vector are supported, we will just use the first supported format of the surface. 
+    /// If this is empty or none of the formats in this vector are supported, we will just use the first supported format of the surface.
     pub surface_formats_priority: Vec<TextureFormat>,
     /// we will try to use this config if supported. otherwise, the surface recommended options will be used.   
     pub surface_config: SurfaceConfiguration,
@@ -166,6 +167,7 @@ impl SurfaceManager {
         if let Some(window) = window_backend.get_window() {
             if self.surface.is_none() {
                 self.surface = Some(unsafe {
+                    tracing::debug!("creating a surface with {:?}", window.raw_window_handle());
                     instance
                         .create_surface(window)
                         .expect("failed to create surface")
@@ -206,6 +208,20 @@ impl SurfaceManager {
                             .expect("surface has zero supported texture formats")
                     })
             }
+            let view_format = if self.surface_config.format.describe().srgb {
+                self.surface_config.format
+            } else {
+                tracing::warn!(
+                    "surface format is not srgb: {:?}",
+                    self.surface_config.format
+                );
+                match self.surface_config.format {
+                    TextureFormat::Rgba8Unorm => TextureFormat::Rgba8UnormSrgb,
+                    TextureFormat::Bgra8Unorm => TextureFormat::Bgra8UnormSrgb,
+                    _ => self.surface_config.format,
+                }
+            };
+            self.surface_config.view_formats = vec![view_format];
             debug!(
                 "using format: {:#?} for surface configuration",
                 self.surface_config.format
@@ -253,7 +269,9 @@ impl WgpuBackend {
         for adapter in instance.enumerate_adapters(Backends::all()) {
             debug!("adapter: {:#?}", adapter.get_info());
         }
+
         let surface = window_backend.get_window().map(|w| unsafe {
+            tracing::debug!("creating a surface with {:?}", w.raw_window_handle());
             instance
                 .create_surface(w)
                 .expect("failed to create surface")
@@ -322,8 +340,15 @@ impl GfxBackend for WgpuBackend {
             &self.adapter,
             &self.device,
         );
-        self.painter
-            .on_resume(&self.device, self.surface_manager.surface_config.format);
+        self.painter.on_resume(
+            &self.device,
+            self.surface_manager
+                .surface_config
+                .view_formats
+                .first()
+                .copied()
+                .unwrap(),
+        );
     }
 
     fn prepare_frame(&mut self, window_backend: &mut impl WindowBackend) {
@@ -638,9 +663,20 @@ impl EguiPainter {
             &screen_size_bindgroup_layout,
             &texture_bindgroup_layout,
         );
+
         // linear and nearest samplers for egui textures to use for creation of their bindgroups
-        let linear_sampler = dev.create_sampler(&EGUI_LINEAR_SAMPLER_DESCRIPTOR);
-        let nearest_sampler = dev.create_sampler(&EGUI_NEAREST_SAMPLER_DESCRIPTOR);
+        let linear_sampler = dev.create_sampler(&SamplerDescriptor {
+            label: Some("linear sampler"),
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..Default::default()
+        });
+        let nearest_sampler = dev.create_sampler(&SamplerDescriptor {
+            label: Some("nearest sampler"),
+            mag_filter: FilterMode::Nearest,
+            min_filter: FilterMode::Nearest,
+            ..Default::default()
+        });
 
         // empty vertex and index buffers.
         let vb = dev.create_buffer(&BufferDescriptor {
@@ -754,6 +790,7 @@ impl EguiPainter {
                             base_array_layer: 0,
                             array_layer_count: None,
                         });
+                        assert!(delta.options.magnification == delta.options.minification);
                         let bindgroup = dev.create_bind_group(&BindGroupDescriptor {
                             label: None,
                             layout: &self.texture_bindgroup_layout,
@@ -1071,33 +1108,3 @@ pub const EGUI_PIPELINE_BLEND_STATE: BlendState = BlendState {
 };
 
 // `Default::default` is not const. so, we have to manually fill the default values
-
-pub const EGUI_LINEAR_SAMPLER_DESCRIPTOR: SamplerDescriptor = SamplerDescriptor {
-    label: Some("linear sampler"),
-    mag_filter: FilterMode::Linear,
-    min_filter: FilterMode::Linear,
-    mipmap_filter: FilterMode::Linear,
-    address_mode_u: AddressMode::ClampToEdge,
-    address_mode_v: AddressMode::ClampToEdge,
-    address_mode_w: AddressMode::ClampToEdge,
-    lod_min_clamp: 0.0,
-    lod_max_clamp: f32::MAX,
-    compare: None,
-    anisotropy_clamp: None,
-    border_color: None,
-};
-
-pub const EGUI_NEAREST_SAMPLER_DESCRIPTOR: SamplerDescriptor = SamplerDescriptor {
-    label: Some("nearest sampler"),
-    mag_filter: FilterMode::Nearest,
-    min_filter: FilterMode::Nearest,
-    mipmap_filter: FilterMode::Nearest,
-    address_mode_u: AddressMode::ClampToEdge,
-    address_mode_v: AddressMode::ClampToEdge,
-    address_mode_w: AddressMode::ClampToEdge,
-    lod_min_clamp: 0.0,
-    lod_max_clamp: f32::MAX,
-    compare: None,
-    anisotropy_clamp: None,
-    border_color: None,
-};
