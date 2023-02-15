@@ -117,7 +117,7 @@ impl WindowBackend for Sdl2Backend {
         Some(self.size_physical_pixels)
     }
 
-    fn run_event_loop<U: EguiUserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
+    fn run_event_loop<U: UserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
         let mut events_wait_duration = std::time::Duration::ZERO;
         let callback = move || {
             // gather events
@@ -178,10 +178,6 @@ impl WindowBackend for Sdl2Backend {
 
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
         self.window.subsystem().gl_get_proc_address(symbol) as *const core::ffi::c_void
-    }
-
-    fn get_raw_input(&mut self) -> RawInput {
-        self.take_raw_input()
     }
 
     fn is_opengl(&self) -> bool {

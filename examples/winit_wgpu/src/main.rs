@@ -1,6 +1,6 @@
 use egui_backend::{
     egui::{self, Window},
-    EguiUserApp, GfxBackend, WindowBackend,
+    GfxBackend, UserApp, WindowBackend,
 };
 use egui_render_wgpu::{wgpu, wgpu::RenderPipeline, WgpuBackend};
 use egui_window_winit::WinitBackend;
@@ -15,7 +15,7 @@ struct App {
     window_backend: WinitBackend,
 }
 
-impl EguiUserApp for App {
+impl UserApp for App {
     fn gui_run(&mut self) {
         let egui_context = self.egui_context.clone();
         let egui_context = &&egui_context;
@@ -140,7 +140,7 @@ pub fn fake_main() {
 
     let wgpu_backend = WgpuBackend::new(&mut window_backend, Default::default());
     let app = App::new(wgpu_backend, window_backend);
-    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
+    <App as UserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {

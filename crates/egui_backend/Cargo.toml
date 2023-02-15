@@ -36,12 +36,3 @@ egui_serde = ["egui/serde"]
 [dependencies]
 raw-window-handle = "0.5"
 egui = { version = "0.21.0", default-features = false }
-tracing = { version = "0.1" }
-intmap = { version = "2.0" }
-bytemuck = { version = "1.12" }
-window_backend = { path = "../window_backend" }
-# # winit backend. 
-# winit = { version = "0.28.1", optional = true }
-# glow = { version = "0.11", optional = true }
-# three-d = { version = "0.14", optional = true }
-# pollster = { version = "0.2", optional = true }

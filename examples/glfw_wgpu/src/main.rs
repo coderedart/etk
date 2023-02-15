@@ -1,6 +1,6 @@
 use egui_backend::{
     egui::{self, Window},
-    BackendConfig, EguiUserApp, GfxBackend, WindowBackend,
+    BackendConfig, GfxBackend, UserApp, WindowBackend,
 };
 use egui_render_wgpu::{
     wgpu::RenderPipeline,
@@ -21,7 +21,7 @@ struct App {
     glfw_backend: GlfwBackend,
 }
 
-impl EguiUserApp for App {
+impl UserApp for App {
     type UserWindowBackend = GlfwBackend;
 
     fn get_all(
@@ -93,7 +93,7 @@ impl EguiUserApp for App {
         let egui_context = egui_context.clone();
         // don't bother doing anything if there's no window
         if let Some(full_output) = if wb.get_window().is_some() {
-            let input = wb.get_raw_input();
+            let input = wb.take_raw_input();
             gb.prepare_frame(wb);
             egui_context.begin_frame(input);
             self.gui_run();
@@ -249,7 +249,7 @@ pub fn fake_main() {
     );
 
     let app = App::new(window_backend);
-    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
+    <App as UserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {

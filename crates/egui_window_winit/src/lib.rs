@@ -160,7 +160,7 @@ impl WindowBackend for WinitBackend {
         }
     }
 
-    fn run_event_loop<U: EguiUserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
+    fn run_event_loop<U: UserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
         let el = user_app
             .get_all()
             .0
@@ -278,10 +278,6 @@ impl WindowBackend for WinitBackend {
 
     fn get_proc_address(&mut self, _: &str) -> *const core::ffi::c_void {
         unimplemented!("winit backend doesn't support loading opengl function pointers")
-    }
-
-    fn get_raw_input(&mut self) -> RawInput {
-        self.take_raw_input()
     }
 
     fn is_opengl(&self) -> bool {

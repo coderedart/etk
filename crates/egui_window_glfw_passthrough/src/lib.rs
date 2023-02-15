@@ -164,11 +164,7 @@ impl WindowBackend for GlfwBackend {
         Some(self.framebuffer_size_physical)
     }
 
-    fn get_raw_input(&mut self) -> RawInput {
-        self.take_raw_input()
-    }
-
-    fn run_event_loop<U: EguiUserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
+    fn run_event_loop<U: UserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
         let mut wait_events_duration = std::time::Duration::ZERO;
         let callback = move || {
             let window_backend = user_app.get_all().0;

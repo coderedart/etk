@@ -16,14 +16,13 @@
 //! this crate provides 3 traits:
 //! 1. [`WindowBackend`]: implemented by window backends like [winit](https://docs.rs/winit), [glfw](https://docs.rs/glfw), [sdl2](https://docs.rs/sdl2) etc..
 //! 2. [`GfxBackend`]: implemented by rendering backends like [wgpu](https://docs.rs/wgpu), [glow](https://docs.rs/glow), [three-d](https://docs.rs/three-d),
-//! 3. [`EguiUserApp<WB>`]: implemented by end user's struct which holds the app data as well as egui context and the renderer.
+//! 3. [`EguiUserApp`]: implemented by end user's struct which holds the app data as well as egui context and the renderer.
 //!
 //! This crate will also try to provide functions or structs which are useful across all backends.
 //! 1. [`BackendConfig`]: It holds the common configuration for all the window/gfx backends.
 //!
 //! look at the docs of the relevant trait to learn more.
 
-mod egui_api;
 // #[cfg(target_feature = "egui")]
 pub use egui;
 // #[cfg(target_feature = "egui")]
@@ -63,10 +62,9 @@ pub trait WindowBackend: Sized {
     /// image with an outdated size. you will need to provide the *latest* size for succesful creation of surface frame.
     /// if the return value is `None`, the window doesn't exist yet. eg: on android, after suspend but before resume event.
     fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]>;
-    fn get_raw_input(&mut self) -> RawInput;
     /// Run the event loop. different backends run it differently, so they all need to take care and
     /// call the Gfx or UserApp functions at the right time.
-    fn run_event_loop<U: EguiUserApp<UserWindowBackend = Self> + 'static>(user_app: U);
+    fn run_event_loop<U: UserApp<UserWindowBackend = Self> + 'static>(user_app: U);
     /// config if GfxBackend needs them. usually tells the GfxBackend whether we have an opengl or non-opengl window.
     /// for example, if a vulkan backend gets a window with opengl, it can gracefully panic instead of probably segfaulting.
     /// this also serves as an indicator for opengl gfx backends, on whether this backend supports `swap_buffers` or `get_proc_address` functions.
@@ -140,7 +138,7 @@ pub trait GfxBackend {
 /// This is the trait most users care about. we already have a bunch of default implementations. override them for more advanced usage.
 /// We assume that user will provide egui context as well as the gfx backend. This allows user to have maximum control on how they behave.
 ///
-pub trait EguiUserApp {
+pub trait UserApp {
     ///
     type UserGfxBackend: GfxBackend;
     type UserWindowBackend: WindowBackend;
@@ -168,7 +166,7 @@ pub trait EguiUserApp {
         let egui_context = egui_context.clone();
         // don't bother doing anything if there's no window
         if let Some(full_output) = if wb.get_window().is_some() {
-            let input = wb.get_raw_input();
+            let input = wb.take_raw_input();
             gb.prepare_frame(wb);
             egui_context.begin_frame(input);
             self.gui_run();

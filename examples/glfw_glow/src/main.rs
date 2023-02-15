@@ -1,5 +1,5 @@
 use egui::Window;
-use egui_backend::{egui, BackendConfig, EguiUserApp, GfxBackend, WindowBackend};
+use egui_backend::{egui, BackendConfig, GfxBackend, UserApp, WindowBackend};
 use egui_render_glow::{glow::HasContext, GlowBackend};
 use egui_window_glfw_passthrough::GlfwBackend;
 struct App {
@@ -20,7 +20,7 @@ impl App {
         }
     }
 }
-impl EguiUserApp for App {
+impl UserApp for App {
     type UserGfxBackend = GlowBackend;
 
     type UserWindowBackend = GlfwBackend;
@@ -62,7 +62,7 @@ impl EguiUserApp for App {
         let egui_context = egui_context.clone();
         // don't bother doing anything if there's no window
         if let Some(full_output) = if wb.get_window().is_some() {
-            let input = wb.get_raw_input();
+            let input = wb.take_raw_input();
             gb.prepare_frame(wb);
             egui_context.begin_frame(input);
             self.gui_run();
@@ -137,7 +137,7 @@ pub fn fake_main() {
     let glow_backend = GlowBackend::new(&mut window_backend, Default::default());
     dbg!(window_backend.window.get_content_scale());
     let app = App::new(glow_backend, window_backend);
-    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
+    <App as UserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {

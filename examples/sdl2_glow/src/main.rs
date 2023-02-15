@@ -1,5 +1,5 @@
 use egui::Window;
-use egui_backend::{egui, BackendConfig, EguiUserApp, GfxBackend, WindowBackend};
+use egui_backend::{egui, BackendConfig, GfxBackend, UserApp, WindowBackend};
 use egui_render_glow::{glow::HasContext, GlowBackend};
 use egui_window_sdl2::Sdl2Backend;
 struct App {
@@ -20,7 +20,7 @@ impl App {
         }
     }
 }
-impl EguiUserApp for App {
+impl UserApp for App {
     type UserGfxBackend = GlowBackend;
 
     type UserWindowBackend = Sdl2Backend;
@@ -86,7 +86,7 @@ pub fn fake_main() {
     let mut window_backend = Sdl2Backend::new(config, BackendConfig {});
     let glow_backend = GlowBackend::new(&mut window_backend, Default::default());
     let app = App::new(glow_backend, window_backend);
-    <App as EguiUserApp>::UserWindowBackend::run_event_loop(app);
+    <App as UserApp>::UserWindowBackend::run_event_loop(app);
 }
 
 fn main() {
