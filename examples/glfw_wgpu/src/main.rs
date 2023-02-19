@@ -241,11 +241,10 @@ pub fn fake_main() {
                 glfw_context.window_hint(egui_window_glfw_passthrough::glfw::WindowHint::Floating(
                     true,
                 ));
-                egui_window_glfw_passthrough::default_glfw_callback(glfw_context);
             }),
             ..Default::default()
         },
-        BackendConfig {},
+        BackendConfig::default(),
     );
 
     let app = App::new(window_backend);

@@ -19,7 +19,7 @@
 //! 3. [`EguiUserApp`]: implemented by end user's struct which holds the app data as well as egui context and the renderer.
 //!
 //! This crate will also try to provide functions or structs which are useful across all backends.
-//! 1. [`BackendConfig`]: It holds the common configuration for all the window/gfx backends.
+//! 1. [`BackendConfig`]: has some configuration which needs to be provided at startup.
 //!
 //! look at the docs of the relevant trait to learn more.
 
@@ -32,10 +32,27 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::time::Duration;
 
 /// Intended to provide a common struct which all window backends accept as their configuration.
-/// In future, might add more options like initial window size/title etc..
-#[derive(Debug, Clone, Default)]
-pub struct BackendConfig {}
+/// To set size/position/title etc.. just use the windowbackend trait functions after you created the window.
+/// This struct is primarily intended for settings which are to be specified *before* creating a window like opengl or transparency etc..
+#[derive(Debug, Clone)]
+pub struct BackendConfig {
+    /// true by default
+    pub is_opengl: bool,
+    pub opengl_config: Option<OpenGlConfig>,
+    pub transparent: Option<bool>,
+}
 
+impl Default for BackendConfig {
+    fn default() -> Self {
+        // let is_opengl = cfg!(target_arch = "wasm32");
+        let is_opengl = true;
+        Self {
+            is_opengl,
+            transparent: None,
+            opengl_config: Default::default(),
+        }
+    }
+}
 /// Implement this trait for your windowing backend. the main responsibility of a
 /// Windowing Backend is to
 /// 1. poll and gather events
@@ -83,6 +100,21 @@ pub trait WindowBackend: Sized {
             "get_proc_address is not implemented for this window backend. called with {symbol}"
         );
     }
+    fn set_window_title(&mut self, title: &str);
+    fn get_window_position(&mut self) -> Option<[f32; 2]>;
+    fn set_window_position(&mut self, pos: [f32; 2]);
+    fn get_window_size(&mut self) -> Option<[f32; 2]>;
+    fn set_window_size(&mut self, size: [f32; 2]);
+    fn get_window_minimized(&mut self) -> Option<bool>;
+    fn set_minimize_window(&mut self, min: bool);
+    fn get_window_maximized(&mut self) -> Option<bool>;
+    fn set_maximize_window(&mut self, max: bool);
+    fn get_window_visibility(&mut self) -> Option<bool>;
+    fn set_window_visibility(&mut self, vis: bool);
+    fn get_always_on_top(&mut self) -> Option<bool>;
+    fn set_always_on_top(&mut self, always_on_top: bool);
+    fn get_passthrough(&mut self) -> Option<bool>;
+    fn set_passthrough(&mut self, passthrough: bool);
 }
 
 /// Trait for Gfx backends. these could be Gfx APIs like opengl or vulkan or wgpu etc..
@@ -142,6 +174,7 @@ pub trait UserApp {
     ///
     type UserGfxBackend: GfxBackend;
     type UserWindowBackend: WindowBackend;
+    /// A shortcut function to get windodw, gfx backends as well as egui context.
     fn get_all(
         &mut self,
     ) -> (
@@ -149,6 +182,7 @@ pub trait UserApp {
         &mut Self::UserGfxBackend,
         &egui::Context,
     );
+
     fn resize_framebuffer(&mut self) {
         let (wb, gb, _) = self.get_all();
         gb.resize_framebuffer(wb);
@@ -266,4 +300,31 @@ pub mod util {
             arr
         })
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OpenGlConfig {
+    /// minimum major opengl version
+    /// 2 or 3 is common
+    pub major: Option<u8>,
+    /// minor version.
+    pub minor: Option<u8>,
+    /// If we want an ES context
+    /// false is default
+    pub es: Option<bool>,
+    /// try creating srgb surface for window
+    pub srgb: Option<bool>,
+    /// depth bits
+    pub depth: Option<u8>,
+    /// stencil bits
+    pub stencil: Option<u8>,
+    /// The number of bits per each color channel.
+    /// default should be rgba with 8 bits each.
+    pub color_bits: Option<[u8; 4]>,
+    /// Must be a power of 2
+    pub multi_samples: Option<u8>,
+    /// If false, we request a compatible context.
+    /// If true, core context.
+    /// true is default.
+    pub core: Option<bool>,
 }

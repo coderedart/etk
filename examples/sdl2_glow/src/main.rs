@@ -83,7 +83,7 @@ pub fn fake_main() {
             window_builder.build().expect("failed to create a window")
         }),
     };
-    let mut window_backend = Sdl2Backend::new(config, BackendConfig {});
+    let mut window_backend = Sdl2Backend::new(config, BackendConfig::default());
     let glow_backend = GlowBackend::new(&mut window_backend, Default::default());
     let app = App::new(glow_backend, window_backend);
     <App as UserApp>::UserWindowBackend::run_event_loop(app);

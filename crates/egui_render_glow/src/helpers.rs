@@ -43,6 +43,10 @@ pub unsafe fn create_glow_context(
     window_backend: &mut impl WindowBackend,
     _webgl_config: WebGlConfig,
 ) -> Arc<glow::Context> {
+    assert!(
+        window_backend.is_opengl(),
+        "egui render glow only works with windows which are opengl"
+    );
     // for wasm32-unknown-unknown, use glow's own constructor.
     #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
     let glow_context = create_glow_wasm32_unknown(window_backend, _webgl_config);

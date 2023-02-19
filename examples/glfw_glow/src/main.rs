@@ -126,16 +126,10 @@ pub fn fake_main() {
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let config = egui_window_glfw_passthrough::GlfwConfig {
-        glfw_callback: Box::new(|gtx| {
-            gtx.window_hint(egui_window_glfw_passthrough::glfw::WindowHint::ClientApi(
-                egui_window_glfw_passthrough::glfw::ClientApiHint::OpenGl,
-            ));
-        }),
         ..Default::default()
     };
-    let mut window_backend = GlfwBackend::new(config, BackendConfig {});
+    let mut window_backend = GlfwBackend::new(config, BackendConfig::default());
     let glow_backend = GlowBackend::new(&mut window_backend, Default::default());
-    dbg!(window_backend.window.get_content_scale());
     let app = App::new(glow_backend, window_backend);
     <App as UserApp>::UserWindowBackend::run_event_loop(app);
 }

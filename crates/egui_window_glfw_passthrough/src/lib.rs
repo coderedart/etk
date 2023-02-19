@@ -18,14 +18,15 @@ pub struct GlfwBackend {
     pub glfw: glfw::Glfw,
     pub events_receiver: Receiver<(f64, WindowEvent)>,
     pub window: glfw::Window,
+    pub window_size_logical: [f32; 2],
     pub framebuffer_size_physical: [u32; 2],
-    pub scale: [f32; 2],
+    pub scale: f32,
     pub raw_input: RawInput,
     pub cursor_icon: glfw::StandardCursor,
     pub frame_events: Vec<WindowEvent>,
     pub resized_event_pending: bool,
     pub backend_config: BackendConfig,
-    pub cursor_pos_physical_pixels: [f32; 2],
+    pub cursor_pos: [f32; 2],
     pub cursor_inside_bounds: bool,
 }
 impl Drop for GlfwBackend {
@@ -36,62 +37,24 @@ impl Drop for GlfwBackend {
 /// Signature of Glfw callback function inside [`GlfwConfig`]
 /// we provide a default callback for common usecases -> [`default_glfw_callback()`]
 pub type GlfwCallback = Box<dyn FnOnce(&mut Glfw)>;
-/// This is usually provided by the default [`GlfwConfig`]
-/// If you want to pass in a custom callback, then call this function within that custom callback.
-/// If you want to override some setting, then call this callback inside your custom callback first and then override any hints/settings.
-pub fn default_glfw_callback(glfw_context: &mut Glfw) {
-    // emscripten doesn't have window hint string method. but window_hint fn actually uses it, so we will trigger link error.
-    // on wasm32-unknown-unknown, prefer opengl (webgl)
-    #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
-    glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::OpenGl));
-    // on desktop, don't use opengl by default
-    #[cfg(not(target_arch = "wasm32"))]
-    glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
-}
 /// This is the signature for window callback inside new function of [`GlfwBackend`]
 pub type WindowCallback = Box<dyn FnOnce(&mut glfw::Window)>;
-///
-pub fn default_window_callback(window: &mut glfw::Window) {
-    let should_poll = true;
-    // set which events you care about
-    window.set_pos_polling(should_poll);
-    window.set_size_polling(should_poll);
-    window.set_close_polling(should_poll);
-    window.set_refresh_polling(should_poll);
-    window.set_focus_polling(should_poll);
-    window.set_iconify_polling(should_poll);
-    window.set_framebuffer_size_polling(should_poll);
-    window.set_key_polling(should_poll);
-    window.set_char_polling(should_poll);
-    window.set_mouse_button_polling(should_poll);
-    window.set_cursor_pos_polling(should_poll);
-    window.set_cursor_enter_polling(should_poll);
-    window.set_scroll_polling(should_poll);
-    window.set_drag_and_drop_polling(should_poll);
-    #[cfg(not(target_os = "emscripten"))]
-    {
-        // emscripten doesn't have support for these
-        window.set_char_mods_polling(should_poll);
-        window.set_maximize_polling(should_poll);
-        window.set_content_scale_polling(should_poll);
-        window.set_store_lock_key_mods(should_poll);
-    }
-}
+
 /// The configuration struct for Glfw Backend
 /// passed in to [`WindowBackend::new()`] of [`GlfwBackend`]
 pub struct GlfwConfig {
     /// This callback is called with `&mut Glfw` just before creating a window
-    ///
+    /// but after applying the backend settings.
     pub glfw_callback: GlfwCallback,
-    /// This will be called right after window creation. you can use this to do things at startup like
-    /// resizing, changing title, changing to fullscreen etc..
+    /// This will be called right after window creation and setting event polling.
+    /// you can use this to do things at startup like resizing, changing title, changing to fullscreen etc..
     pub window_callback: WindowCallback,
 }
 impl Default for GlfwConfig {
     fn default() -> Self {
         Self {
-            glfw_callback: Box::new(default_glfw_callback),
-            window_callback: Box::new(default_window_callback),
+            glfw_callback: Box::new(|_| {}),
+            window_callback: Box::new(|_| {}),
         }
     }
 }
@@ -102,7 +65,64 @@ impl WindowBackend for GlfwBackend {
     fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
-
+        let BackendConfig {
+            is_opengl,
+            opengl_config,
+            transparent,
+        } = &backend_config;
+        if let Some(transparent) = *transparent {
+            glfw_context.window_hint(WindowHint::TransparentFramebuffer(transparent));
+        }
+        if *is_opengl {
+            glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::OpenGl));
+            if let Some(OpenGlConfig {
+                major,
+                minor,
+                es,
+                srgb,
+                depth,
+                stencil,
+                color_bits,
+                multi_samples,
+                core,
+            }) = opengl_config.clone()
+            {
+                if let Some(major) = major {
+                    glfw_context.window_hint(WindowHint::ContextVersionMajor(major.into()));
+                }
+                if let Some(minor) = minor {
+                    glfw_context.window_hint(WindowHint::ContextVersionMinor(minor.into()));
+                }
+                if let Some(es) = es {
+                    if es {
+                        glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::OpenGlEs));
+                    }
+                }
+                if let Some(srgb) = srgb {
+                    glfw_context.window_hint(WindowHint::SRgbCapable(srgb));
+                }
+                if let Some(depth) = depth {
+                    glfw_context.window_hint(WindowHint::DepthBits(Some(depth.into())));
+                }
+                if let Some(stencil) = stencil {
+                    glfw_context.window_hint(WindowHint::StencilBits(Some(stencil.into())));
+                }
+                if let Some(color_bits) = color_bits {
+                    glfw_context.window_hint(WindowHint::RedBits(Some(color_bits[0].into())));
+                    glfw_context.window_hint(WindowHint::GreenBits(Some(color_bits[1].into())));
+                    glfw_context.window_hint(WindowHint::BlueBits(Some(color_bits[2].into())));
+                    glfw_context.window_hint(WindowHint::AlphaBits(Some(color_bits[3].into())));
+                }
+                if let Some(multi_samples) = multi_samples {
+                    glfw_context.window_hint(WindowHint::Samples(Some(multi_samples.into())));
+                }
+                if let Some(core) = core {
+                    glfw_context.window_hint(WindowHint::OpenGlForwardCompat(!core));
+                }
+            }
+        } else {
+            glfw_context.window_hint(WindowHint::ClientApi(ClientApiHint::NoApi));
+        }
         (config.glfw_callback)(&mut glfw_context);
 
         // create a window
@@ -113,26 +133,65 @@ impl WindowBackend for GlfwBackend {
         if api == glfw::ffi::OPENGL_API || api == glfw::ffi::OPENGL_ES_API {
             window.make_current();
         }
-
+        let should_poll = true;
+        // set which events you care about
+        window.set_pos_polling(should_poll);
+        window.set_size_polling(should_poll);
+        window.set_close_polling(should_poll);
+        window.set_refresh_polling(should_poll);
+        window.set_focus_polling(should_poll);
+        window.set_iconify_polling(should_poll);
+        window.set_framebuffer_size_polling(should_poll);
+        window.set_key_polling(should_poll);
+        window.set_char_polling(should_poll);
+        window.set_mouse_button_polling(should_poll);
+        window.set_cursor_pos_polling(should_poll);
+        window.set_cursor_enter_polling(should_poll);
+        window.set_scroll_polling(should_poll);
+        window.set_drag_and_drop_polling(should_poll);
         #[cfg(not(target_os = "emscripten"))]
-        let scale = { window.get_content_scale() };
+        {
+            // emscripten doesn't have support for these
+            window.set_char_mods_polling(should_poll);
+            window.set_maximize_polling(should_poll);
+            window.set_content_scale_polling(should_poll);
+            window.set_store_lock_key_mods(should_poll);
+        }
+        #[cfg(not(target_os = "emscripten"))]
+        let scale = window.get_content_scale().0;
         #[cfg(target_os = "emscripten")]
-        let scale = (1.0f32, 1.0f32); // maybe check framebuffer size vs window size to calculate scale?
+        let scale = {
+            let scale = unsafe { emscripten_get_device_pixel_ratio() } as f32;
+            if scale != 1.0 {
+                let width = (800.0 * scale) as i32;
+                let height = (600.0 * scale) as i32;
+                window.set_size(width, height);
+            }
+            unsafe { emscripten_set_element_css_size(CANVAS_ELEMENT_NAME, 800.0, 600.0) };
+            scale
+        };
 
         (config.window_callback)(&mut window);
 
         // collect details and keep them updated
         let (width, height) = window.get_framebuffer_size();
+
         let cursor_position = window.get_cursor_pos();
+        // #[cfg(not(target_os = "emscripten"))]
+        let cursor_position = (
+            cursor_position.0 / scale as f64,
+            cursor_position.1 / scale as f64,
+        );
+
         let size_physical_pixels = [width as u32, height as u32];
         // set raw input screen rect details so that first frame
         // will have correct size even without any resize event
         let raw_input = RawInput {
             screen_rect: Some(egui::Rect::from_points(&[
                 Default::default(),
-                [width as f32 / scale.0, height as f32 / scale.0].into(),
+                [width as f32 / scale, height as f32 / scale].into(),
             ])),
-            pixels_per_point: Some(scale.0),
+            pixels_per_point: Some(scale),
             ..Default::default()
         };
         Self {
@@ -140,14 +199,15 @@ impl WindowBackend for GlfwBackend {
             events_receiver,
             window,
             framebuffer_size_physical: size_physical_pixels,
-            scale: [scale.0, scale.1],
-            cursor_pos_physical_pixels: [cursor_position.0 as f32, cursor_position.1 as f32],
+            scale,
+            cursor_pos: [cursor_position.0 as f32, cursor_position.1 as f32],
             raw_input,
             frame_events: vec![],
             resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
             backend_config,
             cursor_icon: StandardCursor::Arrow,
             cursor_inside_bounds: false,
+            window_size_logical: [width as f32 / scale, height as f32 / scale],
         }
     }
 
@@ -159,8 +219,8 @@ impl WindowBackend for GlfwBackend {
     }
 
     fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]> {
-        let physical_fb_size = self.window.get_framebuffer_size();
-        self.framebuffer_size_physical = [physical_fb_size.0 as u32, physical_fb_size.1 as u32];
+        let (width, height) = self.window.get_framebuffer_size();
+        self.framebuffer_size_physical = [width as u32, height as u32];
         Some(self.framebuffer_size_physical)
     }
 
@@ -180,10 +240,7 @@ impl WindowBackend for GlfwBackend {
                 user_app.get_all().0.resized_event_pending = false;
             }
             let window_backend = user_app.get_all().0;
-            let logical_size = [
-                window_backend.framebuffer_size_physical[0] as f32 / window_backend.scale[0],
-                window_backend.framebuffer_size_physical[1] as f32 / window_backend.scale[1],
-            ];
+            let logical_size = window_backend.window_size_logical;
             // run userapp gui function. let user do anything he wants with window or gfx backends
             if let Some((platform_output, timeout)) = user_app.run(logical_size) {
                 wait_events_duration = timeout.min(std::time::Duration::from_secs(1));
@@ -236,11 +293,125 @@ impl WindowBackend for GlfwBackend {
     }
 
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
-        self.window.get_proc_address(symbol)
+        if self.is_opengl() {
+            self.window.get_proc_address(symbol)
+        } else {
+            unimplemented!("window is not opengl. cannot use get_proc_address.");
+        }
+    }
+
+    fn set_window_title(&mut self, title: &str) {
+        self.window.set_title(title);
+    }
+
+    fn get_window_position(&mut self) -> Option<[f32; 2]> {
+        let pos = self.window.get_pos();
+        [pos.0 as f32, pos.1 as f32].into()
+    }
+
+    fn set_window_position(&mut self, pos: [f32; 2]) {
+        self.window.set_pos(pos[0] as i32, pos[1] as i32);
+    }
+
+    fn get_window_size(&mut self) -> Option<[f32; 2]> {
+        let (width, height) = if cfg!(target_arch = "wasm32") {
+            let mut width = 0.0;
+            let mut height = 0.0;
+            unsafe {
+                assert_eq!(
+                    emscripten_get_element_css_size(
+                        CANVAS_ELEMENT_NAME,
+                        &mut width as *mut _,
+                        &mut height as *mut _,
+                    ),
+                    0
+                );
+            }
+            (width as f32, height as f32)
+        } else {
+            let (width, height) = self.window.get_size();
+            (width as f32, height as f32)
+        };
+        self.window_size_logical = [width, height];
+        [width, height].into()
+    }
+
+    fn set_window_size(&mut self, size: [f32; 2]) {
+        self.window.set_size(size[0] as i32, size[1] as i32);
+        if cfg!(target_arch = "wasm32") {
+            self.window
+                .set_size((size[0] * self.scale) as i32, (size[1] * self.scale) as i32);
+            // change the canvas stye size too.
+            unsafe {
+                assert_eq!(
+                    emscripten_set_element_css_size(
+                        CANVAS_ELEMENT_NAME,
+                        size[0] as _,
+                        size[1] as _
+                    ),
+                    0
+                );
+            }
+        } else {
+            self.window.set_size(size[0] as i32, size[1] as i32);
+        }
+    }
+
+    fn get_window_minimized(&mut self) -> Option<bool> {
+        self.window.is_iconified().into()
+    }
+
+    fn set_minimize_window(&mut self, min: bool) {
+        if min {
+            self.window.iconify();
+        } else {
+            self.window.restore();
+        }
+    }
+
+    fn get_window_maximized(&mut self) -> Option<bool> {
+        self.window.is_maximized().into()
+    }
+
+    fn set_maximize_window(&mut self, max: bool) {
+        if max {
+            self.window.maximize();
+        } else {
+            self.window.restore();
+        }
+    }
+
+    fn get_window_visibility(&mut self) -> Option<bool> {
+        self.window.is_visible().into()
+    }
+
+    fn set_window_visibility(&mut self, vis: bool) {
+        if vis {
+            self.window.show();
+        } else {
+            self.window.hide();
+        }
+    }
+
+    fn get_always_on_top(&mut self) -> Option<bool> {
+        self.window.is_floating().into()
+    }
+
+    fn set_always_on_top(&mut self, always_on_top: bool) {
+        self.window.set_floating(always_on_top);
+    }
+
+    fn get_passthrough(&mut self) -> Option<bool> {
+        self.window.is_mouse_passthrough().into()
+    }
+
+    fn set_passthrough(&mut self, passthrough: bool) {
+        self.window.set_mouse_passthrough(passthrough);
     }
 }
 
 impl GlfwBackend {
+    #[allow(unused)]
     pub fn tick(&mut self) {
         self.frame_events.clear();
         // whether we got a cursor event in this frame.
@@ -254,21 +425,44 @@ impl GlfwBackend {
             // }
 
             if let Some(ev) = match event {
-                glfw::WindowEvent::FramebufferSize(w, h) => {
-                    self.framebuffer_size_physical = [w as u32, h as u32];
+                glfw::WindowEvent::FramebufferSize(width, height) => {
+                    tracing::info!("framebuffer size changed to {width},{height}");
+                    self.framebuffer_size_physical = [width as u32, height as u32];
                     self.resized_event_pending = true;
+                    None
+                }
+                glfw::WindowEvent::Size(width, height) => {
+                    tracing::info!("window size: width {width} height {height}");
+                    let (width, height) = (width as f32, height as f32);
+                    #[cfg(target_arch = "wasm32")]
+                    let (width, height) = {
+                        let mut width = 0.0;
+                        let mut height = 0.0;
+                        unsafe {
+                            assert_eq!(
+                                emscripten_get_element_css_size(
+                                    CANVAS_ELEMENT_NAME,
+                                    &mut width as *mut _,
+                                    &mut height as *mut _,
+                                ),
+                                0
+                            );
+                        }
+                        tracing::info!("window css size emscripten: width {width} height {height}");
+                        (width as f32, height as f32)
+                    };
+                    self.window_size_logical = [width, height];
                     self.raw_input.screen_rect = Some(egui::Rect::from_two_pos(
                         Default::default(),
-                        [w as f32 / self.scale[0], h as f32 / self.scale[1]].into(),
+                        self.window_size_logical.into(),
                     ));
-
                     None
                 }
                 glfw::WindowEvent::MouseButton(mb, a, m) => {
                     let emb = Event::PointerButton {
                         pos: Pos2 {
-                            x: self.cursor_pos_physical_pixels[0] / self.scale[0],
-                            y: self.cursor_pos_physical_pixels[1] / self.scale[1],
+                            x: self.cursor_pos[0],
+                            y: self.cursor_pos[1],
                         },
                         button: glfw_to_egui_pointer_button(mb),
                         pressed: glfw_to_egui_action(a).unwrap_or_default(),
@@ -325,9 +519,10 @@ impl GlfwBackend {
                     })
                 }),
                 glfw::WindowEvent::Char(c) => Some(Event::Text(c.to_string())),
-                glfw::WindowEvent::ContentScale(x, y) => {
+                glfw::WindowEvent::ContentScale(x, _) => {
+                    tracing::info!("content scale changed to {x}");
                     self.raw_input.pixels_per_point = Some(x);
-                    self.scale = [x, y];
+                    self.scale = x;
                     None
                 }
                 glfw::WindowEvent::Close => {
@@ -350,11 +545,10 @@ impl GlfwBackend {
                 glfw::WindowEvent::CursorPos(x, y) => {
                     self.cursor_inside_bounds = true;
                     cursor_event = true;
-
-                    self.cursor_pos_physical_pixels = [x as f32, y as f32];
-                    Some(egui::Event::PointerMoved(
-                        [x as f32 / self.scale[0], y as f32 / self.scale[1]].into(),
-                    ))
+                    // #[cfg(not(target_arch = "wasm32"))]
+                    let (x, y) = (x / self.scale as f64, y / self.scale as f64);
+                    self.cursor_pos = [x as f32, y as f32];
+                    Some(egui::Event::PointerMoved(self.cursor_pos.into()))
                 }
                 WindowEvent::CursorEnter(c) => {
                     self.cursor_inside_bounds = c;
@@ -370,7 +564,11 @@ impl GlfwBackend {
                         None
                     }
                     #[cfg(target_os = "emscripten")]
-                    None
+                    if c {
+                        None
+                    } else {
+                        Some(Event::PointerGone)
+                    }
                 }
                 _rest => None,
             } {
@@ -379,6 +577,13 @@ impl GlfwBackend {
         }
 
         let cursor_position = self.window.get_cursor_pos();
+
+        // #[cfg(not(target_os = "emscripten"))]
+        let cursor_position = (
+            cursor_position.0 / self.scale as f64,
+            cursor_position.1 / self.scale as f64,
+        );
+
         let cursor_position = [cursor_position.0 as f32, cursor_position.1 as f32];
 
         // when there's no cursor event and window is passthrough, then, simulate mouse events
@@ -386,22 +591,15 @@ impl GlfwBackend {
         if !cursor_event && self.window.is_mouse_passthrough() {
             let window_bounds = egui_backend::egui::Rect::from_two_pos(
                 Default::default(),
-                egui::pos2(
-                    self.framebuffer_size_physical[0] as f32,
-                    self.framebuffer_size_physical[1] as f32,
-                ),
+                self.window_size_logical.into(),
             );
             // if cursor within window bounds
             if window_bounds.contains(cursor_position.into()) {
                 // if cursor position has changed since last frame.
-                if cursor_position != self.cursor_pos_physical_pixels {
+                if cursor_position != self.cursor_pos {
                     // we will manually push the cursor moved event.
                     self.raw_input.events.push(Event::PointerMoved(
-                        [
-                            cursor_position[0] / self.scale[0],
-                            cursor_position[1] / self.scale[1],
-                        ]
-                        .into(),
+                        [cursor_position[0], cursor_position[1]].into(),
                     ));
                 }
                 self.cursor_inside_bounds = true;
@@ -415,7 +613,7 @@ impl GlfwBackend {
                 }
             }
         }
-        self.cursor_pos_physical_pixels = cursor_position;
+        self.cursor_pos = cursor_position;
     }
     fn set_cursor(&mut self, cursor: egui::CursorIcon) {
         let cursor = egui_to_glfw_cursor(cursor);
@@ -536,6 +734,7 @@ pub fn egui_to_glfw_cursor(cursor: egui::CursorIcon) -> glfw::StandardCursor {
 #[allow(non_camel_case_types)]
 type em_callback_func = unsafe extern "C" fn();
 
+const CANVAS_ELEMENT_NAME: *const std::ffi::c_char = "#canvas\0".as_ptr() as _;
 extern "C" {
     // This extern is built in by Emscripten.
     pub fn emscripten_run_script_int(x: *const std::ffi::c_uchar) -> std::ffi::c_int;
@@ -545,6 +744,18 @@ extern "C" {
         fps: std::ffi::c_int,
         simulate_infinite_loop: std::ffi::c_int,
     );
+    pub fn emscripten_get_device_pixel_ratio() -> std::ffi::c_double;
+    pub fn emscripten_set_element_css_size(
+        target: *const std::ffi::c_char,
+        width: std::ffi::c_double,
+        height: std::ffi::c_double,
+    ) -> std::ffi::c_int;
+    pub fn emscripten_get_element_css_size(
+        target: *const std::ffi::c_char,
+        width: *mut std::ffi::c_double,
+        height: *mut std::ffi::c_double,
+    ) -> std::ffi::c_int;
+
 }
 
 thread_local!(static MAIN_LOOP_CALLBACK: std::cell::RefCell<Option<Box<dyn FnMut()>>>  = std::cell::RefCell::new(None));

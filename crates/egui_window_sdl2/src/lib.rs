@@ -181,7 +181,88 @@ impl WindowBackend for Sdl2Backend {
     }
 
     fn is_opengl(&self) -> bool {
+        (self.window.window_flags() & sdl2::sys::SDL_WindowFlags::SDL_WINDOW_OPENGL as u32) != 0
+    }
+    fn set_window_title(&mut self, title: &str) {
+        self.window
+            .set_title(title)
+            .expect("failed to set sdl window title");
+    }
+
+    fn get_window_position(&mut self) -> Option<[f32; 2]> {
+        let pos = self.window.position();
+        [pos.0 as f32, pos.1 as f32].into()
+    }
+
+    fn set_window_position(&mut self, pos: [f32; 2]) {
+        self.window.set_position(
+            sdl2::video::WindowPos::Positioned(pos[0] as i32),
+            sdl2::video::WindowPos::Positioned(pos[1] as i32),
+        );
+    }
+
+    fn get_window_size(&mut self) -> Option<[f32; 2]> {
+        let size = self.window.size();
+        [size.0 as f32, size.1 as f32].into()
+    }
+
+    fn set_window_size(&mut self, size: [f32; 2]) {
+        self.window
+            .set_size(size[0] as u32, size[1] as u32)
+            .expect("failed to set sdl window size");
+    }
+
+    fn get_window_minimized(&mut self) -> Option<bool> {
+        self.window.is_minimized().into()
+    }
+
+    fn set_minimize_window(&mut self, min: bool) {
+        if min {
+            self.window.minimize();
+        } else {
+            self.window.restore();
+        }
+    }
+
+    fn get_window_maximized(&mut self) -> Option<bool> {
+        self.window.is_maximized().into()
+    }
+
+    fn set_maximize_window(&mut self, max: bool) {
+        if max {
+            self.window.maximize();
+        } else {
+            self.window.restore();
+        }
+    }
+
+    fn get_window_visibility(&mut self) -> Option<bool> {
+        // self.window.sho().into()
         unimplemented!()
+    }
+
+    fn set_window_visibility(&mut self, vis: bool) {
+        if vis {
+            self.window.show()
+        } else {
+            self.window.hide();
+        }
+    }
+
+    fn get_always_on_top(&mut self) -> Option<bool> {
+        unimplemented!()
+    }
+
+    fn set_always_on_top(&mut self, _always_on_top: bool) {
+        unimplemented!()
+    }
+
+    fn get_passthrough(&mut self) -> Option<bool> {
+        todo!()
+    }
+
+    fn set_passthrough(&mut self, _passthrough: bool) {
+        todo!()
     }
 }
 

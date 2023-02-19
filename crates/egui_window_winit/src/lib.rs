@@ -283,6 +283,91 @@ impl WindowBackend for WinitBackend {
     fn is_opengl(&self) -> bool {
         false
     }
+
+    fn set_window_title(&mut self, title: &str) {
+        if let Some(w) = self.window.as_mut() {
+            w.set_title(title)
+        }
+    }
+
+    fn get_window_position(&mut self) -> Option<[f32; 2]> {
+        self.window.as_mut().map(|w| {
+            w.inner_position()
+                .unwrap()
+                .to_logical::<f32>(w.scale_factor())
+                .into()
+        })
+    }
+
+    fn set_window_position(&mut self, _pos: [f32; 2]) {
+        unimplemented!()
+    }
+
+    fn get_window_size(&mut self) -> Option<[f32; 2]> {
+        self.window
+            .as_mut()
+            .map(|w| w.inner_size().to_logical::<f32>(w.scale_factor()).into())
+    }
+
+    fn set_window_size(&mut self, size: [f32; 2]) {
+        if let Some(w) = self.window.as_mut() {
+            w.set_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
+        }
+    }
+
+    fn get_window_minimized(&mut self) -> Option<bool> {
+        self.window.as_mut().and_then(|w| w.is_minimized())
+    }
+
+    fn set_minimize_window(&mut self, min: bool) {
+        if let Some(w) = self.window.as_mut() {
+            w.set_minimized(min)
+        }
+    }
+
+    fn get_window_maximized(&mut self) -> Option<bool> {
+        self.window.as_mut().map(|w| w.is_maximized())
+    }
+
+    fn set_maximize_window(&mut self, max: bool) {
+        if let Some(w) = self.window.as_mut() {
+            w.set_maximized(max)
+        }
+    }
+
+    fn get_window_visibility(&mut self) -> Option<bool> {
+        self.window.as_mut().and_then(|w| w.is_visible())
+    }
+
+    fn set_window_visibility(&mut self, vis: bool) {
+        if let Some(w) = self.window.as_mut() {
+            w.set_visible(vis)
+        }
+    }
+
+    fn get_always_on_top(&mut self) -> Option<bool> {
+        unimplemented!()
+    }
+
+    fn set_always_on_top(&mut self, always_on_top: bool) {
+        if let Some(w) = self.window.as_mut() {
+            w.set_window_level(if always_on_top {
+                window::WindowLevel::AlwaysOnTop
+            } else {
+                window::WindowLevel::Normal
+            })
+        };
+    }
+
+    fn get_passthrough(&mut self) -> Option<bool> {
+        unimplemented!()
+    }
+
+    fn set_passthrough(&mut self, passthrough: bool) {
+        self.window
+            .as_mut()
+            .map(|w| w.set_cursor_hittest(passthrough));
+    }
 }
 
 impl WinitBackend {
