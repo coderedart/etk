@@ -147,6 +147,8 @@ pub trait GfxBackend {
     /// when this fn is called, we can create a new surface (swapchain) for the window.
     /// doesn't apply on other platforms.
     fn resume(&mut self, _window_backend: &mut impl WindowBackend) {}
+    /// called if framebuffer has been resized. use this to reconfigure your swapchain/surface/viewport..
+    fn resize_framebuffer(&mut self, window_backend: &mut impl WindowBackend);
     /// prepare the surface / swapchain etc.. by acquiring an image for the current frame.
     /// use `WindowBackend::get_live_physical_size_framebuffer` fn to resize your swapchain if it is out of date.
     fn prepare_frame(&mut self, window_backend: &mut impl WindowBackend);
@@ -163,8 +165,6 @@ pub trait GfxBackend {
     /// on opengl, renderer might call `WindowBackend::swap_buffers`.
     /// on wgpu / vulkan, renderer might submit commands to queues, present swapchain image etc..
     fn present(&mut self, window_backend: &mut impl WindowBackend);
-    /// called if framebuffer has been resized. use this to reconfigure your swapchain/surface/viewport..
-    fn resize_framebuffer(&mut self, window_backend: &mut impl WindowBackend);
 }
 
 /// This is the trait most users care about. we already have a bunch of default implementations. override them for more advanced usage.

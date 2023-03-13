@@ -39,6 +39,6 @@ members = [
     "crates/egui_window_sdl2",
     "crates/egui_render_glow",
     "crates/egui_render_three_d",
-    # "crates/egui_render_rend3", don't work until rend3 removes dependency patching in its workspace. too many conflicts.
+    "crates/egui_render_rend3",
     "examples/*",
 ]

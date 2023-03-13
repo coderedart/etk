@@ -48,7 +48,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(linear_from_srgb(out_color_gamma.rgb), out_color_gamma.a);
 }
 
+@fragment
+fn fs_linear_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let in_color = gamma_from_linear_rgba(in.color);
 
+    let tex_linear = textureSample(r_tex_color, r_tex_sampler, in.tex_coord);
+
+    let tex_gamma = gamma_from_linear_rgba(tex_linear);
+
+    let out_color_gamma = in_color * tex_gamma;
+    return vec4<f32>(out_color_gamma);
+}
 // 0-1 sRGB gamma  from  0-1 linear
 fn gamma_from_linear_rgb(rgb: vec3<f32>) -> vec3<f32> {
     let cutoff = rgb < vec3<f32>(0.0031308);

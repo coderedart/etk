@@ -87,7 +87,7 @@ impl Default for WgpuConfig {
                 height: 0,
                 present_mode: PresentMode::Fifo,
                 alpha_mode: wgpu::CompositeAlphaMode::Auto,
-                view_formats: vec![TextureFormat::Bgra8UnormSrgb],
+                view_formats: vec![],
             },
             surface_formats_priority: vec![],
         }
@@ -118,7 +118,7 @@ impl SurfaceManager {
         surface_manager.reconfigure_surface(window_backend, instance, adapter, device);
         surface_manager
     }
-    fn create_current_surface_texture_view(
+    pub fn create_current_surface_texture_view(
         &mut self,
         window_backend: &mut impl WindowBackend,
         device: &Device,
@@ -157,7 +157,7 @@ impl SurfaceManager {
     /// This basically checks if the surface needs creating. and then if needed, creates surface if window exists.
     /// then, it does all the work of configuring the surface.
     /// this is used during resume events to create a surface.
-    fn reconfigure_surface(
+    pub fn reconfigure_surface(
         &mut self,
         window_backend: &mut impl WindowBackend,
         instance: &Instance,
@@ -222,6 +222,12 @@ impl SurfaceManager {
                 }
             };
             self.surface_config.view_formats = vec![view_format];
+
+            #[cfg(target_os = "emscripten")]
+            {
+                self.surface_config.view_formats = vec![];
+            }
+
             debug!(
                 "using format: {:#?} for surface configuration",
                 self.surface_config.format
@@ -230,7 +236,7 @@ impl SurfaceManager {
         }
     }
 
-    fn resize_framebuffer(&mut self, device: &Device, window_backend: &mut impl WindowBackend) {
+    pub fn resize_framebuffer(&mut self, device: &Device, window_backend: &mut impl WindowBackend) {
         if let Some(size) = window_backend.get_live_physical_size_framebuffer() {
             self.surface_config.width = size[0];
             self.surface_config.height = size[1];
@@ -241,7 +247,7 @@ impl SurfaceManager {
                 .configure(device, &self.surface_config);
         }
     }
-    fn suspend(&mut self) {
+    pub fn suspend(&mut self) {
         self.surface = None;
         self.surface_current_image = None;
         self.surface_view = None;
@@ -582,11 +588,8 @@ impl EguiPainter {
         screen_size_bindgroup_layout: &BindGroupLayout,
         texture_bindgroup_layout: &BindGroupLayout,
     ) -> RenderPipeline {
-        let srgb = pipeline_surface_format.describe().srgb;
-        assert!(
-            srgb,
-            "egui wgpu only supports srgb compatible framebuffer: {pipeline_surface_format:#?}"
-        );
+        // let srgb = pipeline_surface_format.is_srgb();
+
         // pipeline layout. screensize uniform buffer for vertex shader + texture and sampler for fragment shader
         let egui_pipeline_layout = dev.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("egui pipeline layout"),
@@ -613,7 +616,11 @@ impl EguiPainter {
             multisample: MultisampleState::default(),
             fragment: Some(FragmentState {
                 module: &shader_module,
-                entry_point: "fs_main",
+                entry_point: if pipeline_surface_format.describe().srgb {
+                    "fs_main"
+                } else {
+                    "fs_linear_main"
+                },
                 targets: &[Some(ColorTargetState {
                     format: pipeline_surface_format,
                     blend: Some(EGUI_PIPELINE_BLEND_STATE),

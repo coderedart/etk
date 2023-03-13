@@ -151,7 +151,7 @@ impl WindowBackend for GlfwBackend {
         window.set_drag_and_drop_polling(should_poll);
         #[cfg(not(target_os = "emscripten"))]
         {
-            // emscripten doesn't have support for these
+            // emscripten doesn't have support for these yet. will get support for content scaling in 3.1.33
             window.set_char_mods_polling(should_poll);
             window.set_maximize_polling(should_poll);
             window.set_content_scale_polling(should_poll);
@@ -225,6 +225,7 @@ impl WindowBackend for GlfwBackend {
     }
 
     fn run_event_loop<U: UserApp<UserWindowBackend = Self> + 'static>(mut user_app: U) {
+        tracing::info!("entering glfw event loop");
         let mut wait_events_duration = std::time::Duration::ZERO;
         let callback = move || {
             let window_backend = user_app.get_all().0;

@@ -6,9 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# egui_backend = { path = "../egui_backend" }
-# tracing = { version = "*" }
-# rend3 = { path = "../../../rend3/rend3" }
-# egui_render_wgpu = { path = "../egui_render_wgpu" }
-# pollster = { version = "0.2" }
-# rend3-routine = { git = "https://github.com/BVE-Reborn/rend3.git", branch = "gpu-culling" }
+egui_backend = { path = "../egui_backend" }
+tracing = { version = "*" }
+rend3 = { git = "https://github.com/BVE-Reborn/rend3.git" }
+egui_render_wgpu = { path = "../egui_render_wgpu" }
+pollster = { version = "0.3.0" }
+rend3-routine = { git = "https://github.com/BVE-Reborn/rend3.git" }

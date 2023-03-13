@@ -506,6 +506,10 @@ impl Sdl2Backend {
                 });
                 None
             }
+            sdl2::event::Event::AppTerminating { .. } => {
+                tracing::info!("app terminating event");
+                None
+            }
             rest => {
                 unimplemented!("sdl2 egui backend doesn't support this kinda event yet: {rest:#?}")
             }

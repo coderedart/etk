@@ -19,6 +19,10 @@ rustflags = [
     # "link-arg=-s",
     # "-C",
     # "link-arg=FULL_ES3", # for opengl es 3 emulation
+    # "-C",
+    # "link-arg=-s",
+    # "-C",
+    # "link-arg=ERROR_ON_UNDEFINED_SYMBOLS=0", # for ignoring some egl symbols. maybe needed for wgpu 
     "-C",
     "link-arg=-s",
     "-C",
