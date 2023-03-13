@@ -38,58 +38,6 @@ impl UserApp for App {
             &self.egui_context,
         )
     }
-
-    fn resize_framebuffer(&mut self) {
-        let (wb, gb, _) = self.get_all();
-        gb.resize_framebuffer(wb);
-    }
-
-    fn resume(&mut self) {
-        let (wb, gb, _) = self.get_all();
-        gb.resume(wb);
-    }
-
-    fn suspend(&mut self) {
-        let (wb, gb, _) = self.get_all();
-        gb.suspend(wb);
-    }
-
-    fn run(
-        &mut self,
-        logical_size: [f32; 2],
-    ) -> Option<(egui::PlatformOutput, std::time::Duration)> {
-        let (wb, gb, egui_context) = self.get_all();
-        let egui_context = egui_context.clone();
-        // don't bother doing anything if there's no window
-        if let Some(full_output) = if wb.get_window().is_some() {
-            let input = wb.take_raw_input();
-            gb.prepare_frame(wb);
-            egui_context.begin_frame(input);
-            self.gui_run();
-            Some(egui_context.end_frame())
-        } else {
-            None
-        } {
-            let egui::FullOutput {
-                platform_output,
-                repaint_after,
-                textures_delta,
-                shapes,
-            } = full_output;
-            let (wb, gb, egui_context) = self.get_all();
-            let egui_context = egui_context.clone();
-
-            gb.render_egui(
-                egui_context.tessellate(shapes),
-                textures_delta,
-                logical_size,
-            );
-            gb.present(wb);
-            return Some((platform_output, repaint_after));
-        }
-        None
-    }
-
     fn gui_run(&mut self) {
         let egui_context = self.egui_context.clone();
         let egui_context = &egui_context;
