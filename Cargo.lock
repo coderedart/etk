@@ -917,6 +917,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "glfw_rend3"
+version = "0.1.0"
+dependencies = [
+ "egui_backend",
+ "egui_render_rend3",
+ "egui_window_glfw_passthrough",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "glfw_wgpu"
 version = "0.1.0"
 dependencies = [

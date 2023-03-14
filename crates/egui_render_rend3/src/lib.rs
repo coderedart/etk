@@ -1,27 +1,18 @@
 use egui_backend::{egui, GfxBackend, WindowBackend};
 use egui_render_wgpu::{
     wgpu::{self, CommandEncoder, TextureFormat, TextureUsages},
-    EguiPainter, SurfaceManager, WgpuBackend, WgpuConfig,
-};
-use rend3::{
-    graph::{
-        NodeResourceUsage, RenderGraph, RenderPassTarget, RenderPassTargets, RenderTargetHandle,
-    },
-    types::Color,
+    EguiPainter, SurfaceManager,
 };
 
-use std::{mem, sync::Arc};
+use std::sync::Arc;
 
-use egui::TexturesDelta;
-use rend3::{types::SampleCount, Renderer};
+use rend3::Renderer;
 
 pub struct Rend3Backend {
     surface_manager: SurfaceManager,
     renderer: Arc<Renderer>,
-    command_encoders: Vec<CommandEncoder>,
     painter: EguiPainter,
-    screen_size: [f32; 2],
-    surface_size: [u32; 2],
+    command_encoders: Vec<CommandEncoder>,
 }
 
 pub struct Rend3Config {}
@@ -34,7 +25,7 @@ impl Default for Rend3Config {
 impl GfxBackend for Rend3Backend {
     type Configuration = Rend3Config;
 
-    fn new(window_backend: &mut impl WindowBackend, config: Self::Configuration) -> Self {
+    fn new(window_backend: &mut impl WindowBackend, _config: Self::Configuration) -> Self {
         let iad = pollster::block_on(rend3::create_iad(
             None,
             None,
@@ -72,18 +63,11 @@ impl GfxBackend for Rend3Backend {
         let renderer = Renderer::new(iad.clone(), Default::default(), aspect_ratio)
             .expect("failed to create renderer");
         let painter = EguiPainter::new(&iad.device, surface_manager.surface_config.format);
-        let screen_size = window_backend.get_window_size().unwrap_or_default();
-        let surface_size = [
-            surface_manager.surface_config.width,
-            surface_manager.surface_config.height,
-        ];
 
         Self {
             surface_manager,
             renderer,
             painter,
-            screen_size,
-            surface_size,
             command_encoders: vec![],
         }
     }
@@ -115,61 +99,6 @@ impl GfxBackend for Rend3Backend {
                 self.surface_manager.surface_config.height,
             ],
         );
-        /*
-
-        impl Rend3Backend {
-            pub fn add_to_graph<'node>(
-                &'node mut self,
-                graph: &mut RenderGraph<'node>,
-                mut input: Input<'node>,
-                output: RenderTargetHandle,
-            ) {
-
-                let mut builder = graph.add_node("egui");
-
-                let output_handle = builder.add_render_target(output, NodeResourceUsage::InputOutput);
-
-                let rpass_handle = builder.add_renderpass(RenderPassTargets {
-                    targets: vec![RenderPassTarget {
-                        color: output_handle,
-                        clear: Color::BLACK,
-                        resolve: None,
-                    }],
-                    depth_stencil: None,
-                });
-
-                // We can't free textures directly after the call to `execute_with_renderpass` as it freezes
-                // the lifetime of `self` for the remainder of the closure. so we instead buffer the textures
-                // to free for a frame so we can clean them up before the next call.
-                let textures_to_free = mem::replace(
-                    &mut self.textures_to_free,
-                    mem::take(&mut input.textures_delta.free),
-                );
-
-                builder.build(move |mut ctx| {
-                    let rpass = ctx.encoder_or_pass.take_rpass(rpass_handle);
-
-
-                    let mut cmd_buffer = ctx
-                        .renderer
-                        .device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-                    self.internal.update_buffers(
-                        &ctx.renderer.device,
-                        &ctx.renderer.queue,
-                        &mut cmd_buffer,
-                        input.clipped_meshes,
-                        &self.screen_descriptor,
-                    );
-                    drop(cmd_buffer);
-
-                    self.internal
-                        .render(rpass, input.clipped_meshes, &self.screen_descriptor);
-                }
-            }
-        }
-
-                 */
         let mut command_encoder =
             self.renderer
                 .device
@@ -199,7 +128,7 @@ impl GfxBackend for Rend3Backend {
         self.command_encoders.push(command_encoder);
     }
 
-    fn present(&mut self, window_backend: &mut impl WindowBackend) {
+    fn present(&mut self, _window_backend: &mut impl WindowBackend) {
         assert!(self.surface_manager.surface_view.is_some());
         self.renderer.queue.submit(
             std::mem::take(&mut self.command_encoders)
