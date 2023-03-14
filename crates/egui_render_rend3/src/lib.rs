@@ -9,10 +9,10 @@ use std::sync::Arc;
 use rend3::Renderer;
 
 pub struct Rend3Backend {
-    surface_manager: SurfaceManager,
-    renderer: Arc<Renderer>,
-    painter: EguiPainter,
-    command_encoders: Vec<CommandEncoder>,
+    pub surface_manager: SurfaceManager,
+    pub renderer: Arc<Renderer>,
+    pub painter: EguiPainter,
+    pub command_encoders: Vec<CommandEncoder>,
 }
 
 pub struct Rend3Config {}
