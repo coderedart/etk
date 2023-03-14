@@ -14,13 +14,8 @@ pub struct Rend3Backend {
     pub painter: EguiPainter,
     pub command_encoders: Vec<CommandEncoder>,
 }
-
+#[derive(Debug, Default)]
 pub struct Rend3Config {}
-impl Default for Rend3Config {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl GfxBackend for Rend3Backend {
     type Configuration = Rend3Config;
