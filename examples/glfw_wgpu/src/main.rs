@@ -234,17 +234,17 @@ pub fn fake_main() {
     let window_backend = GlfwBackend::new(
         GlfwConfig {
             glfw_callback: Box::new(|glfw_context| {
-                // make the window that will be created transparent.
-                glfw_context.window_hint(
-                    egui_window_glfw_passthrough::glfw::WindowHint::TransparentFramebuffer(true),
-                );
                 glfw_context.window_hint(egui_window_glfw_passthrough::glfw::WindowHint::Floating(
                     true,
                 ));
             }),
             ..Default::default()
         },
-        BackendConfig::default(),
+        BackendConfig {
+            is_opengl: false,
+            opengl_config: Default::default(),
+            transparent: true.into(),
+        },
     );
 
     let app = App::new(window_backend);

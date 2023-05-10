@@ -430,11 +430,8 @@ impl GlfwBackend {
                     tracing::info!("framebuffer size changed to {width},{height}");
                     self.framebuffer_size_physical = [width as u32, height as u32];
                     self.resized_event_pending = true;
-                    None
-                }
-                glfw::WindowEvent::Size(width, height) => {
-                    tracing::info!("window size: width {width} height {height}");
-                    let (width, height) = (width as f32, height as f32);
+                    // logical size
+                    let (width, height) = (width as f32 / self.scale, height as f32 / self.scale);
                     #[cfg(target_arch = "wasm32")]
                     let (width, height) = {
                         let mut width = 0.0;
@@ -457,6 +454,10 @@ impl GlfwBackend {
                         Default::default(),
                         self.window_size_logical.into(),
                     ));
+                    None
+                }
+                glfw::WindowEvent::Size(width, height) => {
+                    tracing::info!("window size: width {width} height {height}");
                     None
                 }
                 glfw::WindowEvent::MouseButton(mb, a, m) => {

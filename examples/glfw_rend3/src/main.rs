@@ -2,6 +2,7 @@ use egui::Window;
 use egui_backend::{egui, BackendConfig, GfxBackend, UserApp, WindowBackend};
 use egui_render_rend3::*;
 use egui_window_glfw_passthrough::GlfwBackend;
+use rend3::types::glam;
 use rend3::types::DirectionalLightHandle;
 use rend3_gltf::*;
 use rend3_routine::{base::BaseRenderGraph, pbr::PbrRoutine, tonemapping::TonemappingRoutine};
@@ -65,7 +66,7 @@ impl App {
         });
         let directional_light_handle =
             renderer.add_directional_light(rend3::types::DirectionalLight {
-                color: glam::Vec3::ONE,
+                color: rend3::types::glam::Vec3::ONE,
                 intensity: 4.0,
                 // Direction will be normalized
                 direction: glam::Vec3::new(-1.0, -4.0, 2.0),
