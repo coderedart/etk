@@ -773,7 +773,7 @@ where
     unsafe {
         emscripten_set_main_loop(wrapper::<F>, 0, 1);
     }
-
+    #[allow(clippy::extra_unused_type_parameters)]
     extern "C" fn wrapper<F>()
     where
         F: FnMut(),
