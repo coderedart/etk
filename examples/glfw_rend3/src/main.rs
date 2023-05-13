@@ -6,6 +6,8 @@ use rend3::types::glam;
 use rend3::types::DirectionalLightHandle;
 use rend3_gltf::*;
 use rend3_routine::{base::BaseRenderGraph, pbr::PbrRoutine, tonemapping::TonemappingRoutine};
+
+const REND3_GLB: &[u8] = include_bytes!("../rend3.glb");
 struct App {
     frame_count: usize,
     bg_color: egui::Color32,
@@ -20,11 +22,10 @@ struct App {
 }
 impl App {
     pub fn new(rend3_backend: Rend3Backend, glfw_backend: GlfwBackend) -> Self {
-        let box_gltf = std::fs::read("./data.glb").unwrap();
         let renderer = rend3_backend.renderer.clone();
         let gltf_scene = pollster::block_on(load_gltf(
             &renderer,
-            &box_gltf,
+            REND3_GLB,
             &Default::default(),
             |io| async move { std::fs::read(io.as_str()) },
         ))
