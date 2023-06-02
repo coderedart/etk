@@ -39,6 +39,10 @@ members = [
     "crates/egui_window_sdl2",
     "crates/egui_render_glow",
     "crates/egui_render_three_d",
-    "crates/egui_render_rend3",
-    "examples/*",
+    # "crates/egui_render_rend3", # re-enable after rend3 upgrades to wgpu 0.16. 
+    "examples/glfw_glow",
+    "examples/glfw_wgpu",
+    # "examples/glfw_rend3",
+    "examples/sdl2_glow",
+    "examples/winit_wgpu",
 ]

@@ -7,11 +7,7 @@ use egui_backend::egui;
 use egui_backend::{GfxBackend, WindowBackend};
 use intmap::IntMap;
 use raw_window_handle::HasRawWindowHandle;
-use std::{
-    convert::TryInto,
-    num::{NonZeroU32, NonZeroU64},
-    sync::Arc,
-};
+use std::{convert::TryInto, num::NonZeroU64, sync::Arc};
 use tracing::{debug, info};
 pub use wgpu;
 use wgpu::*;
@@ -199,7 +195,7 @@ impl SurfaceManager {
                 }
                 self.surface_config.format = supported_formats
                     .iter()
-                    .find(|f| f.describe().srgb)
+                    .find(|f| f.is_srgb())
                     .copied()
                     .unwrap_or_else(|| {
                         supported_formats
@@ -208,7 +204,7 @@ impl SurfaceManager {
                             .expect("surface has zero supported texture formats")
                     })
             }
-            let view_format = if self.surface_config.format.describe().srgb {
+            let view_format = if self.surface_config.format.is_srgb() {
                 self.surface_config.format
             } else {
                 tracing::warn!(
@@ -616,7 +612,7 @@ impl EguiPainter {
             multisample: MultisampleState::default(),
             fragment: Some(FragmentState {
                 module: &shader_module,
-                entry_point: if pipeline_surface_format.describe().srgb {
+                entry_point: if pipeline_surface_format.is_srgb() {
                     "fs_main"
                 } else {
                     "fs_linear_main"
@@ -776,14 +772,8 @@ impl EguiPainter {
                             data_bytes,
                             ImageDataLayout {
                                 offset: 0,
-                                bytes_per_row: Some(
-                                    NonZeroU32::new(size.width * 4)
-                                        .expect("texture bytes per row is zero"),
-                                ),
-                                rows_per_image: Some(
-                                    NonZeroU32::new(size.height)
-                                        .expect("texture rows count is zero"),
-                                ),
+                                bytes_per_row: Some(size.width * 4),
+                                rows_per_image: Some(size.height),
                             },
                             size,
                         );

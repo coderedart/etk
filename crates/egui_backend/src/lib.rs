@@ -16,7 +16,7 @@
 //! this crate provides 3 traits:
 //! 1. [`WindowBackend`]: implemented by window backends like [winit](https://docs.rs/winit), [glfw](https://docs.rs/glfw), [sdl2](https://docs.rs/sdl2) etc..
 //! 2. [`GfxBackend`]: implemented by rendering backends like [wgpu](https://docs.rs/wgpu), [glow](https://docs.rs/glow), [three-d](https://docs.rs/three-d),
-//! 3. [`EguiUserApp`]: implemented by end user's struct which holds the app data as well as egui context and the renderer.
+//! 3. [`UserApp`]: implemented by end user's struct which holds the app data as well as egui context and the renderer.
 //!
 //! This crate will also try to provide functions or structs which are useful across all backends.
 //! 1. [`BackendConfig`]: has some configuration which needs to be provided at startup.
@@ -55,35 +55,39 @@ impl Default for BackendConfig {
 }
 /// Implement this trait for your windowing backend. the main responsibility of a
 /// Windowing Backend is to
-/// 1. poll and gather events
-/// 2. convert events to egui raw input and give it to egui context's begin_frame
-/// 3. provide framebuffer resize (optional) details to Gfx Backend when preparing the frame (surface / swapchain etc..)
-/// 4. run event loop and call the necessary functions of Gfx and UserApp
+/// 1. run event loop and call the necessary functions of Gfx and UserApp every frame.
+/// 2. poll and gather events.
+/// 3. convert the events to egui's event types before submitting raw input.
+/// 4. provide details like window size or window handle to Gfx Backend for creation/update of surface / swapchain.
 pub trait WindowBackend: Sized {
     /// This will be WindowBackend's configuration. if necessary, just add Boxed closures as its
     /// fields and run them before window creation, after window creation etc.. to provide maximum
     /// configurability to users
     type Configuration: Default + Sized;
+    /// This type is used by GfxBackend to create/manage swapchain/surfaces. We use an associated type,
+    /// because impl Trait is not yet supported in return positions of trait functions.
+    /// For now, we only support a single window.
     type WindowType: HasRawDisplayHandle + HasRawWindowHandle + Sized;
-    /// Create a new window backend. and return info needed for the GfxBackend creation and rendering
+    /// Create a new window backend.
     /// config is the custom configuration of a specific window backend
+    /// while backend_config is a general config struct for common enough settings like window title.
     fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self;
-    /// This frame's events gather into rawinput and to be presented to egui's context
+    /// extracts all the events of this frame.
     fn take_raw_input(&mut self) -> RawInput;
     /// This gives us the "Window" struct of this particular backend. should implement raw window handle apis.
     /// if this is None, it means window hasn't been created, or has been destroyed for some reason.
-    /// usually on android, this means the app is suspended.
+    /// usually on android, this means the app is suspended. Other platforms always return a live window.
     fn get_window(&mut self) -> Option<&mut Self::WindowType>;
     /// sometimes, the frame buffer size might have changed and the resize event is still not received.
-    /// in those cases, wgpu / vulkan like render apis will throw an error if you try to acquire swapchain
-    /// image with an outdated size. you will need to provide the *latest* size for succesful creation of surface frame.
+    /// in those cases, wgpu / vulkan like render apis will throw an error if you try to acquire swapchain image
+    /// with an outdated size. you will need to provide the *latest* size.
     /// if the return value is `None`, the window doesn't exist yet. eg: on android, after suspend but before resume event.
     fn get_live_physical_size_framebuffer(&mut self) -> Option<[u32; 2]>;
-    /// Run the event loop. different backends run it differently, so they all need to take care and
-    /// call the Gfx or UserApp functions at the right time.
+    /// Run the event loop
+    /// Window Backend must call the relevant UserApp functions at the right time.
     fn run_event_loop<U: UserApp<UserWindowBackend = Self> + 'static>(user_app: U);
     /// config if GfxBackend needs them. usually tells the GfxBackend whether we have an opengl or non-opengl window.
-    /// for example, if a vulkan backend gets a window with opengl, it can gracefully panic instead of probably segfaulting.
+    /// for example, if a vulkan backend gets a window with opengl, it can gracefully panic instead of segfaulting.
     /// this also serves as an indicator for opengl gfx backends, on whether this backend supports `swap_buffers` or `get_proc_address` functions.
     fn get_config(&self) -> &BackendConfig;
     /// optional. only implemented by gl windowing libraries like glfw/sdl2 which hold the gl context with Window
@@ -92,7 +96,9 @@ pub trait WindowBackend: Sized {
     fn swap_buffers(&mut self) {
         unimplemented!("swap buffers is not implemented for this window backend");
     }
+    /// A direct helper function to tell us if the window is backed by opengl or non-opengl (vk/dx/mtl).
     fn is_opengl(&self) -> bool;
+
     /// get openGL function addresses. optional, just like `Self::swap_buffers`.
     /// panic! if it doesn't apply to your WindowBackend. eg: winit.
     fn get_proc_address(&mut self, symbol: &str) -> *const core::ffi::c_void {
@@ -100,33 +106,46 @@ pub trait WindowBackend: Sized {
             "get_proc_address is not implemented for this window backend. called with {symbol}"
         );
     }
+    /// To change the title of the window
     fn set_window_title(&mut self, title: &str);
+    /// The position of the window relative to top left of the monitor/screen/workspace.
     fn get_window_position(&mut self) -> Option<[f32; 2]>;
+    /// set the position of the window relative to top left of the monitor/screen/workspace.
     fn set_window_position(&mut self, pos: [f32; 2]);
+    /// get the size of the window in logical pixels. Use `Self::get_live_physical_framebuffer_size` for physical surface size.
     fn get_window_size(&mut self) -> Option<[f32; 2]>;
+    /// set the window size in logical pixels.
     fn set_window_size(&mut self, size: [f32; 2]);
+    /// check if window is minimized.
+    /// Warn: On some platforms, size of a minimized window might be returned as "zero"
     fn get_window_minimized(&mut self) -> Option<bool>;
+    /// To minimize/restore a window.
     fn set_minimize_window(&mut self, min: bool);
+    /// If window is maximized.
     fn get_window_maximized(&mut self) -> Option<bool>;
+    /// To maximize/restore the window.
     fn set_maximize_window(&mut self, max: bool);
+    /// If the window is visible on screen.
     fn get_window_visibility(&mut self) -> Option<bool>;
+    /// To show/hide the window. Usually, you will want to hide the window until you have prepared/drawn
+    /// to the surface atleast once, and then show the window. Otherwise, Users might see garbage until the first frame.
     fn set_window_visibility(&mut self, vis: bool);
+    /// If the window will always stay on top of other windows
     fn get_always_on_top(&mut self) -> Option<bool>;
+    /// To make the window always stay on top of other windows. Usually used for Overlays.
     fn set_always_on_top(&mut self, always_on_top: bool);
+    /// If the window is "passthrough".
+    /// Passthrough simply means that the window is only visually visible, but input will go to whatever is behind/below the window.
     fn get_passthrough(&mut self) -> Option<bool>;
+    /// To make the window passthrough or non-passthrough. used by overlays.
+    /// By checking if you application gui (egui) requires the input or not, you can set this to act as an overlay.
     fn set_passthrough(&mut self, passthrough: bool);
 }
 
 /// Trait for Gfx backends. these could be Gfx APIs like opengl or vulkan or wgpu etc..
 /// or higher level renderers like three-d or rend3 or custom renderers etc..
-///
-/// This trait is generic over the WindowBackend because some renderers might want to only work for a specific
-/// window backend.
-///
-/// for example, an sdl2_gfx renderer might only want to work with a specific sdl2 window backend. and
-/// another person might want to make a different sdl2 renderer, and can reuse the old sdl2 window backend.
 pub trait GfxBackend {
-    /// similar to WindowBakendConfig. just make them as complicated or as simple as you want.
+    /// similar to WindowBackendConfig. A custom config struct for the creation of GfxBackend
     type Configuration: Default;
 
     /// create a new GfxBackend using info from window backend and custom config struct
@@ -139,6 +158,8 @@ pub trait GfxBackend {
 
     /// Android only. callend on app suspension, which destroys the window.
     /// so, will need to destroy the `Surface` and recreate during resume event.
+    /// ### Panic
+    /// Panic on other platforms
     fn suspend(&mut self, _window_backend: &mut impl WindowBackend) {
         unimplemented!("This window backend doesn't implement suspend event");
     }
@@ -167,14 +188,15 @@ pub trait GfxBackend {
     fn present(&mut self, window_backend: &mut impl WindowBackend);
 }
 
-/// This is the trait most users care about. we already have a bunch of default implementations. override them for more advanced usage.
-/// We assume that user will provide egui context as well as the gfx backend. This allows user to have maximum control on how they behave.
-///
+/// This is the trait most users care about.
+/// Just have a struct with WindowBackend, GfxBackend and egui context as fields.
+/// and implmenet the `get_all` and `gui_run` fn for a simple app.
+/// or you can overload the `run` fn for more advanced stuff like filtering input events etc..
 pub trait UserApp {
-    ///
     type UserGfxBackend: GfxBackend;
     type UserWindowBackend: WindowBackend;
     /// A shortcut function to get windodw, gfx backends as well as egui context.
+    /// Primarily used to provide default implementations of `resize_framebuffer`, `resume`, `suspend` and `run` fns.
     fn get_all(
         &mut self,
     ) -> (
@@ -227,7 +249,8 @@ pub trait UserApp {
         }
         None
     }
-    /// This is the only function user needs to implement. this function will be called every frame.
+    /// This is the only function user needs to implement. this function will be called every frame by the default implementation of `run` fn.
+    /// Just use the egui context to build the user interface, and after this function is called, `run` fn default impl will take care of drawing egui.
     fn gui_run(&mut self);
 }
 
