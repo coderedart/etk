@@ -433,7 +433,7 @@ impl GfxBackend for WgpuBackend {
     }
 }
 
-pub const EGUI_SHADER_SRC: &str = include_str!("../../../shaders/egui.wgsl");
+pub const EGUI_SHADER_SRC: &str = include_str!("../egui.wgsl");
 
 type PrepareCallback = dyn Fn(&Device, &Queue, &mut IdTypeMap) + Sync + Send;
 type RenderCallback =

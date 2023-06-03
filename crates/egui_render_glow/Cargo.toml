@@ -2,15 +2,15 @@
 name = "egui_render_glow"
 version = "0.4.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "egui rendering backend using glow"
+license = "MIT"
 
 [dependencies]
 tracing = { version = "0.1" }
 intmap = { version = "2.0" }
 bytemuck = { version = "1.12" }
 glow = { version = "0.12" }
-egui_backend = { path = "../egui_backend", features = ["egui_bytemuck"] }
+egui_backend = { version = "0.4", path = "../egui_backend", features = ["egui_bytemuck"] }
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))'.dependencies]
 wasm-bindgen = { version = "0.2" }

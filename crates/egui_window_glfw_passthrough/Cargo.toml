@@ -2,8 +2,9 @@
 name = "egui_window_glfw_passthrough"
 version = "0.4.0"
 edition = "2021"
+description = "egui windowing backend using Glfw"
+license = "MIT"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = ["glfw/default"]
 all = ["glfw_sys", "vulkan", "wayland", "log", "image"]
@@ -15,6 +16,6 @@ image = ["glfw/image"]
 
 
 [dependencies]
-egui_backend = { version = "*", path = "../egui_backend" }
+egui_backend = { version = "0.4", path = "../egui_backend" }
 glfw = { version = "0.51.1", package = "glfw-passthrough", default-features = false }
 tracing = { version = "0.1" }

@@ -21,9 +21,9 @@ macro_rules! glow_error {
     };
 }
 /// All shaders are targeting #version 300 es
-pub const EGUI_VS: &str = include_str!("../../../shaders/egui.vert");
+pub const EGUI_VS: &str = include_str!("..//egui.vert");
 /// the output will be in srgb space, so make sure to disable framebuffer srgb.
-pub const EGUI_FS: &str = include_str!("../../../shaders/egui.frag");
+pub const EGUI_FS: &str = include_str!("../egui.frag");
 
 /// these are config to be provided to browser when requesting a webgl context
 ///

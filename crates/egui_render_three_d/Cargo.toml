@@ -2,10 +2,10 @@
 name = "egui_render_three_d"
 version = "0.4.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "egui rendering backend using three-d"
+license = "MIT"
 
 [dependencies]
-egui_backend = { path = "../egui_backend" }
-egui_render_glow = { path = "../egui_render_glow" }
+egui_backend = { version = "0.4", path = "../egui_backend" }
+egui_render_glow = { version = "0.4", path = "../egui_render_glow" }
 three-d = { version = "0.15", default-features = false}
