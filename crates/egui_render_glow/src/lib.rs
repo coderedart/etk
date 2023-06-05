@@ -88,9 +88,7 @@ impl GfxBackend for GlowBackend {
     fn new(window_backend: &mut impl WindowBackend, config: Self::Configuration) -> Self {
         let glow_context: Arc<glow::Context> =
             unsafe { create_glow_context(window_backend, config.webgl_config) };
-        for (index, extension) in glow_context.supported_extensions().iter().enumerate() {
-            println!("ext {index}: {extension}");
-        }
+
         if glow_context.supported_extensions().contains("EXT_sRGB")
             || glow_context.supported_extensions().contains("GL_EXT_sRGB")
             || glow_context
