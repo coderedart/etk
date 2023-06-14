@@ -35,6 +35,7 @@ members = [
     "crates/egui_backend",
     "crates/egui_window_glfw_passthrough",
     "crates/egui_window_winit",
+    "crates/egui_window_tao",
     "crates/egui_render_wgpu",
     "crates/egui_window_sdl2",
     "crates/egui_render_glow",
@@ -45,4 +46,6 @@ members = [
     # "examples/glfw_rend3",
     "examples/sdl2_glow",
     "examples/winit_wgpu",
+    "examples/tao_wgpu",
+
 ]
