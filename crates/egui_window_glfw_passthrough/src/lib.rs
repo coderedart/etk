@@ -315,7 +315,8 @@ impl WindowBackend for GlfwBackend {
     }
 
     fn get_window_size(&mut self) -> Option<[f32; 2]> {
-        let (width, height) = if cfg!(target_arch = "wasm32") {
+        #[cfg(target_os = "emscripten")]
+        let (width, height) = {
             let mut width = 0.0;
             let mut height = 0.0;
             unsafe {
@@ -329,7 +330,9 @@ impl WindowBackend for GlfwBackend {
                 );
             }
             (width as f32, height as f32)
-        } else {
+        };
+        #[cfg(not(target_os = "emscripten"))]
+        let (width, height) = {
             let (width, height) = self.window.get_size();
             (width as f32, height as f32)
         };
@@ -339,7 +342,8 @@ impl WindowBackend for GlfwBackend {
 
     fn set_window_size(&mut self, size: [f32; 2]) {
         self.window.set_size(size[0] as i32, size[1] as i32);
-        if cfg!(target_arch = "wasm32") {
+        #[cfg(target_os = "emscripten")]
+        {
             self.window
                 .set_size((size[0] * self.scale) as i32, (size[1] * self.scale) as i32);
             // change the canvas stye size too.
@@ -353,9 +357,9 @@ impl WindowBackend for GlfwBackend {
                     0
                 );
             }
-        } else {
-            self.window.set_size(size[0] as i32, size[1] as i32);
         }
+        #[cfg(not(target_os = "emscripten"))]
+        self.window.set_size(size[0] as i32, size[1] as i32);
     }
 
     fn get_window_minimized(&mut self) -> Option<bool> {
@@ -432,7 +436,7 @@ impl GlfwBackend {
                     self.resized_event_pending = true;
                     // logical size
                     let (width, height) = (width as f32 / self.scale, height as f32 / self.scale);
-                    #[cfg(target_arch = "wasm32")]
+                    #[cfg(target_os = "emscripten")]
                     let (width, height) = {
                         let mut width = 0.0;
                         let mut height = 0.0;
