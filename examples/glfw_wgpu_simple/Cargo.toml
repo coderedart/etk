@@ -1,0 +1,13 @@
+[package]
+name = "glfw_wgpu_simple"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+egui_backend = { path = "../../crates/egui_backend" }
+egui_window_glfw_passthrough = { path = "../../crates/egui_window_glfw_passthrough" }
+egui_render_wgpu = { path = "../../crates/egui_render_wgpu" }
+tracing-subscriber = { version = "*", features = ["env-filter"] }

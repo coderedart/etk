@@ -172,8 +172,20 @@ impl SurfaceManager {
 
             let capabilities = self.surface.as_ref().unwrap().get_capabilities(adapter);
             let supported_formats = capabilities.formats;
-            for alpha_mode in capabilities.alpha_modes {
-                debug!("supported alpha modes: {alpha_mode:#?}");
+            debug!(
+                "supported alpha modes: {:#?}",
+                &capabilities.alpha_modes[..]
+            );
+
+            if window_backend.get_config().transparent.unwrap_or_default() {
+                for alpha_mode in capabilities.alpha_modes.iter().copied() {
+                    match alpha_mode {
+                        CompositeAlphaMode::PreMultiplied | CompositeAlphaMode::PostMultiplied => {
+                            self.surface_config.alpha_mode = alpha_mode;
+                        }
+                        _ => {}
+                    }
+                }
             }
             debug!("supported formats of the surface: {supported_formats:#?}");
 
@@ -236,7 +248,10 @@ impl SurfaceManager {
         if let Some(size) = window_backend.get_live_physical_size_framebuffer() {
             self.surface_config.width = size[0];
             self.surface_config.height = size[1];
-
+            info!(
+                "reconfiguring surface with config: {:#?}",
+                &self.surface_config
+            );
             self.surface
                 .as_ref()
                 .unwrap()
