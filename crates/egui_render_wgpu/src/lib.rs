@@ -356,6 +356,25 @@ impl GfxBackend for WgpuBackend {
     fn prepare_frame(&mut self, window_backend: &mut impl WindowBackend) {
         self.surface_manager
             .create_current_surface_texture_view(window_backend, &self.device);
+        if let Some(view) = self.surface_manager.surface_view.as_ref() {
+            let mut ce = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor {
+                    label: "surface clear ce".into(),
+                });
+            ce.begin_render_pass(&RenderPassDescriptor {
+                label: "surface clear rpass".into(),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: true,
+                    },
+                })],
+                depth_stencil_attachment: None,
+            });
+        }
     }
 
     fn render_egui(

@@ -740,6 +740,7 @@ pub fn egui_to_glfw_cursor(cursor: egui::CursorIcon) -> glfw::StandardCursor {
 #[allow(non_camel_case_types)]
 type em_callback_func = unsafe extern "C" fn();
 
+#[allow(unused)]
 const CANVAS_ELEMENT_NAME: *const std::ffi::c_char = "#canvas\0".as_ptr() as _;
 extern "C" {
     // This extern is built in by Emscripten.
