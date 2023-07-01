@@ -14,18 +14,47 @@ use std::sync::mpsc::Receiver;
 /// This is the window backend for egui using [`glfw`]
 /// Most of the startup configuration is done inside [`default_glfw_callback()`] and [`default_window_callback()`]
 /// These are passed to the `new` function using [`GlfwConfig`].
+///
+/// https://www.glfw.org/docs/3.3/intro_guide.html#coordinate_systems
+/// So, there are two different units used when referring to size/position.
+/// 1. physical size. This is size in raw physical pixels of the framebuffer.
+/// 2. virtual screen coordinates (units). These may or may not be the same size as the pixels.
+/// Almost all sizes glfw gives us are in virtual units except monitor size (millimeters) and framebuffer size (physical pixels).
+/// Glfw also allows us to query "Content scale". This is a `float` by which we should be scaling our UI.
+/// In simple terms, if we use a scale of 1.0 on a 1080p monitor of 22 inches, a character might take 20 pixels.
+/// But on a 1080p phone screen of 6 inches, the user won't be able to read text of 20 pixels. So, usually, the content scale will be around 3.0-4.0.
+/// This makes the character take 60-80 pixels, and be a readable size on the tiny hidpi phone screen.
+///
+/// But egui deals with units based on the winit system of physical/logical units.
+/// winit has physical pixels. And it uses content scale, to define "logical points". So, on a screen with a scale of 2.0, logical points are made up of 2 pixels per point.
+/// that is why, egui calls it "pixels_per_point" in RawInput struct. This makes it easy for egui to integrate with winit.
+///
+/// The problem? Glfw's virtual units don't necessarily map to logical points. On some displays, the virtual units could be same as physical pixel units.
+/// But at the same time, the content scale could be 4.0. It is the responsibility of user to divide virtual units with physical pixels and
+/// figure out the number of pixels per virtual unit. And keep this separate from the content scale.
+///
+/// So, we will use glfw's physical pixel size and "emulate" logical points to match the egui expectations.
+///
 pub struct GlfwBackend {
     pub glfw: glfw::Glfw,
     pub events_receiver: Receiver<(f64, WindowEvent)>,
     pub window: glfw::Window,
+    /// in virtual units
+    pub window_size_virtual: [u32; 2],
+    /// in logical points
     pub window_size_logical: [f32; 2],
+    /// in physical pixels
     pub framebuffer_size_physical: [u32; 2],
+    /// ratio between pixels and virtual units
+    pub physical_pixels_per_virtual_unit: f32,
+    /// ratio between logical points and physical pixels
     pub scale: f32,
     pub raw_input: RawInput,
     pub cursor_icon: glfw::StandardCursor,
     pub frame_events: Vec<WindowEvent>,
     pub resized_event_pending: bool,
     pub backend_config: BackendConfig,
+    /// in logical points
     pub cursor_pos: [f32; 2],
     pub cursor_inside_bounds: bool,
 }
@@ -65,11 +94,14 @@ impl WindowBackend for GlfwBackend {
     fn new(config: Self::Configuration, backend_config: BackendConfig) -> Self {
         let mut glfw_context =
             glfw::init(glfw::FAIL_ON_ERRORS).expect("failed to create glfw context");
+        glfw_context.window_hint(WindowHint::ScaleToMonitor(true));
+
         let BackendConfig {
             is_opengl,
             opengl_config,
             transparent,
         } = &backend_config;
+
         if let Some(transparent) = *transparent {
             glfw_context.window_hint(WindowHint::TransparentFramebuffer(transparent));
         }
@@ -174,40 +206,66 @@ impl WindowBackend for GlfwBackend {
         (config.window_callback)(&mut window);
 
         // collect details and keep them updated
-        let (width, height) = window.get_framebuffer_size();
-
-        let cursor_position = window.get_cursor_pos();
+        let (physical_width, physical_height) = window.get_framebuffer_size();
+        let (logical_width, logical_height) = (
+            physical_width as f32 / scale,
+            physical_height as f32 / scale,
+        );
+        let (virtual_width, virtual_height) = window.get_size();
+        let pixels_per_virtual_unit = physical_width as f32 / virtual_width as f32;
+        let cursor_pos_virtual_units = window.get_cursor_pos();
         // #[cfg(not(target_os = "emscripten"))]
-        let cursor_position = (
-            cursor_position.0 / scale as f64,
-            cursor_position.1 / scale as f64,
+        let logical_cursor_position = (
+            cursor_pos_virtual_units.0 as f32 * pixels_per_virtual_unit as f32 / scale,
+            cursor_pos_virtual_units.1 as f32 * pixels_per_virtual_unit as f32 / scale,
         );
 
-        let size_physical_pixels = [width as u32, height as u32];
+        let size_physical_pixels = [physical_width as u32, physical_height as u32];
         // set raw input screen rect details so that first frame
         // will have correct size even without any resize event
         let raw_input = RawInput {
             screen_rect: Some(egui::Rect::from_points(&[
                 Default::default(),
-                [width as f32 / scale, height as f32 / scale].into(),
+                [
+                    physical_width as f32 / scale,
+                    physical_height as f32 / scale,
+                ]
+                .into(),
             ])),
             pixels_per_point: Some(scale),
             ..Default::default()
         };
+        tracing::info!(
+            "GlfwBackend created. 
+        physical_size: {physical_width}, {physical_height};
+        logical_size: {logical_width}, {logical_height};
+        virtual_size: {virtual_width}, {virtual_height};
+        content_scale: {scale};
+        pixels_per_virtual_unit: {pixels_per_virtual_unit};
+        "
+        );
         Self {
             glfw: glfw_context,
             events_receiver,
             window,
             framebuffer_size_physical: size_physical_pixels,
             scale,
-            cursor_pos: [cursor_position.0 as f32, cursor_position.1 as f32],
+            cursor_pos: [
+                logical_cursor_position.0 as f32,
+                logical_cursor_position.1 as f32,
+            ],
             raw_input,
             frame_events: vec![],
             resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
             backend_config,
             cursor_icon: StandardCursor::Arrow,
             cursor_inside_bounds: false,
-            window_size_logical: [width as f32 / scale, height as f32 / scale],
+            window_size_logical: [logical_width, logical_height],
+            window_size_virtual: [
+                virtual_width.try_into().unwrap(),
+                virtual_height.try_into().unwrap(),
+            ],
+            physical_pixels_per_virtual_unit: pixels_per_virtual_unit,
         }
     }
 
@@ -333,15 +391,14 @@ impl WindowBackend for GlfwBackend {
         };
         #[cfg(not(target_os = "emscripten"))]
         let (width, height) = {
-            let (width, height) = self.window.get_size();
+            let (width, height) = self.window.get_framebuffer_size();
             (width as f32, height as f32)
         };
-        self.window_size_logical = [width, height];
+        self.window_size_logical = [width / self.scale, height / self.scale];
         [width, height].into()
     }
 
     fn set_window_size(&mut self, size: [f32; 2]) {
-        self.window.set_size(size[0] as i32, size[1] as i32);
         #[cfg(target_os = "emscripten")]
         {
             self.window
@@ -359,7 +416,10 @@ impl WindowBackend for GlfwBackend {
             }
         }
         #[cfg(not(target_os = "emscripten"))]
-        self.window.set_size(size[0] as i32, size[1] as i32);
+        self.window.set_size(
+            (size[0] * self.scale / self.physical_pixels_per_virtual_unit) as i32,
+            (size[1] * self.scale / self.physical_pixels_per_virtual_unit) as i32,
+        );
     }
 
     fn get_window_minimized(&mut self) -> Option<bool> {
@@ -431,13 +491,16 @@ impl GlfwBackend {
 
             if let Some(ev) = match event {
                 glfw::WindowEvent::FramebufferSize(width, height) => {
-                    tracing::info!("framebuffer size changed to {width},{height}");
+                    tracing::info!("framebuffer physical size changed to {width},{height}");
                     self.framebuffer_size_physical = [width as u32, height as u32];
                     self.resized_event_pending = true;
+                    let (virtual_width, virtual_height) = self.window.get_size();
+                    self.physical_pixels_per_virtual_unit = width as f32 / virtual_width as f32;
                     // logical size
-                    let (width, height) = (width as f32 / self.scale, height as f32 / self.scale);
+                    let (logical_width, logical_height) =
+                        (width as f32 / self.scale, height as f32 / self.scale);
                     #[cfg(target_os = "emscripten")]
-                    let (width, height) = {
+                    let (logical_width, logical_height) = {
                         let mut width = 0.0;
                         let mut height = 0.0;
                         unsafe {
@@ -453,7 +516,7 @@ impl GlfwBackend {
                         tracing::info!("window css size emscripten: width {width} height {height}");
                         (width as f32, height as f32)
                     };
-                    self.window_size_logical = [width, height];
+                    self.window_size_logical = [logical_width, logical_height];
                     self.raw_input.screen_rect = Some(egui::Rect::from_two_pos(
                         Default::default(),
                         self.window_size_logical.into(),
@@ -461,7 +524,9 @@ impl GlfwBackend {
                     None
                 }
                 glfw::WindowEvent::Size(width, height) => {
-                    tracing::info!("window size: width {width} height {height}");
+                    tracing::info!("window virtual size: width {width} height {height}");
+                    let (physical_width, physical_height) = self.window.get_framebuffer_size();
+                    self.physical_pixels_per_virtual_unit = physical_width as f32 / width as f32;
                     None
                 }
                 glfw::WindowEvent::MouseButton(mb, a, m) => {
@@ -529,6 +594,17 @@ impl GlfwBackend {
                     tracing::info!("content scale changed to {x}");
                     self.raw_input.pixels_per_point = Some(x);
                     self.scale = x;
+                    self.window_size_logical = [
+                        self.framebuffer_size_physical[0] as f32 / self.scale,
+                        self.framebuffer_size_physical[1] as f32 / self.scale,
+                    ];
+                    self.raw_input.screen_rect = Some(egui::Rect::from_two_pos(
+                        Default::default(),
+                        self.window_size_logical.into(),
+                    ));
+                    let (virtual_width, virtual_height) = self.window.get_size();
+                    let pixels_per_virtual_unit =
+                        self.framebuffer_size_physical[0] as f32 / virtual_width as f32;
                     None
                 }
                 glfw::WindowEvent::Close => {
@@ -552,7 +628,10 @@ impl GlfwBackend {
                     self.cursor_inside_bounds = true;
                     cursor_event = true;
                     // #[cfg(not(target_arch = "wasm32"))]
-                    let (x, y) = (x / self.scale as f64, y / self.scale as f64);
+                    let (x, y) = (
+                        x as f32 * self.physical_pixels_per_virtual_unit / self.scale,
+                        y as f32 * self.physical_pixels_per_virtual_unit / self.scale,
+                    );
                     self.cursor_pos = [x as f32, y as f32];
                     Some(egui::Event::PointerMoved(self.cursor_pos.into()))
                 }
@@ -582,15 +661,13 @@ impl GlfwBackend {
             }
         }
 
-        let cursor_position = self.window.get_cursor_pos();
+        let virtual_cursor_pos = self.window.get_cursor_pos();
 
         // #[cfg(not(target_os = "emscripten"))]
-        let cursor_position = (
-            cursor_position.0 / self.scale as f64,
-            cursor_position.1 / self.scale as f64,
-        );
-
-        let cursor_position = [cursor_position.0 as f32, cursor_position.1 as f32];
+        let logical_cursor_pos = [
+            virtual_cursor_pos.0 as f32 * self.physical_pixels_per_virtual_unit / self.scale,
+            virtual_cursor_pos.1 as f32 * self.physical_pixels_per_virtual_unit / self.scale,
+        ];
 
         // when there's no cursor event and window is passthrough, then, simulate mouse events
         #[cfg(not(target_os = "emscripten"))]
@@ -600,12 +677,12 @@ impl GlfwBackend {
                 self.window_size_logical.into(),
             );
             // if cursor within window bounds
-            if window_bounds.contains(cursor_position.into()) {
+            if window_bounds.contains(logical_cursor_pos.into()) {
                 // if cursor position has changed since last frame.
-                if cursor_position != self.cursor_pos {
+                if logical_cursor_pos != self.cursor_pos {
                     // we will manually push the cursor moved event.
                     self.raw_input.events.push(Event::PointerMoved(
-                        [cursor_position[0], cursor_position[1]].into(),
+                        [logical_cursor_pos[0], logical_cursor_pos[1]].into(),
                     ));
                 }
                 self.cursor_inside_bounds = true;
@@ -619,7 +696,7 @@ impl GlfwBackend {
                 }
             }
         }
-        self.cursor_pos = cursor_position;
+        self.cursor_pos = logical_cursor_pos;
     }
     fn set_cursor(&mut self, cursor: egui::CursorIcon) {
         let cursor = egui_to_glfw_cursor(cursor);

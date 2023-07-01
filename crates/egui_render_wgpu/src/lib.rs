@@ -129,6 +129,9 @@ impl SurfaceManager {
                     panic!("failed to get surface even after reconfiguration. {e}")
                 })
             });
+            if current_surface_image.suboptimal {
+                tracing::warn!("current surface image is suboptimal. ");
+            }
             let surface_view = current_surface_image
                 .texture
                 .create_view(&TextureViewDescriptor {

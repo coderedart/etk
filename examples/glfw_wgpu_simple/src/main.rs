@@ -45,7 +45,64 @@ impl UserApp for App {
             );
             ui.checkbox(&mut self.egui_wants_input, "Does egui want input?");
         });
-
+        let cursor_pos = egui_context.pointer_latest_pos().unwrap_or_default();
+        // just some controls to show how you can use glfw_backend
+        egui_backend::egui::Window::new("controls").show(egui_context, |ui| {
+            // sometimes, you want to see the borders to understand where the overlay is.
+            let mut borders = self.glfw_backend.window.is_decorated();
+            if ui.checkbox(&mut borders, "window borders").changed() {
+                self.glfw_backend.window.set_decorated(borders);
+            }
+            let window_pos = self.glfw_backend.get_window_position().unwrap();
+            ui.label(format!(
+                "window pos: x: {}, y: {}",
+                window_pos[0], window_pos[1]
+            ));
+            ui.label(format!("window scale: {}", self.glfw_backend.scale));
+            ui.label(format!(
+                "cursor pos: x: {}, y: {}",
+                self.glfw_backend.cursor_pos[0], self.glfw_backend.cursor_pos[1]
+            ));
+            ui.label(format!(
+                "egui cursor pos: x: {}, y: {}",
+                cursor_pos.x, cursor_pos.y
+            ));
+            ui.label(format!(
+                "passthrough: {}",
+                self.glfw_backend.get_passthrough().unwrap()
+            ));
+            // how to change size.
+            // WARNING: don't use drag value, because window size changing while dragging ui messes things up.
+            let mut size = self.glfw_backend.window_size_logical;
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("width: ");
+                ui.add_enabled(false, egui::DragValue::new(&mut size[0]));
+                if ui.button("inc").clicked() {
+                    size[0] += 10.0;
+                    changed = true;
+                }
+                if ui.button("dec").clicked() {
+                    size[0] -= 10.0;
+                    changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("height: ");
+                ui.add_enabled(false, egui::DragValue::new(&mut size[1]));
+                if ui.button("inc").clicked() {
+                    size[1] += 10.0;
+                    changed = true;
+                }
+                if ui.button("dec").clicked() {
+                    size[1] -= 10.0;
+                    changed = true;
+                }
+            });
+            if changed {
+                self.glfw_backend.set_window_size(size);
+            }
+        });
         self.is_window_receiving_events = !self.glfw_backend.window.is_mouse_passthrough();
         if !self.is_window_receiving_events {
             egui_context.request_repaint();
@@ -80,7 +137,11 @@ impl App {
 pub fn fake_main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
-        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or(
+                tracing_subscriber::EnvFilter::new("debug,wgpu=warn,naga=warn"),
+            ),
+        )
         .init();
     let window_backend = GlfwBackend::new(
         GlfwConfig {
