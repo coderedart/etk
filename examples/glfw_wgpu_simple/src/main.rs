@@ -2,7 +2,7 @@ use egui_backend::{
     egui::{self, Window},
     BackendConfig, GfxBackend, UserApp, WindowBackend,
 };
-use egui_render_wgpu::WgpuBackend;
+use egui_render_wgpu::{wgpu::PowerPreference, WgpuBackend, WgpuConfig};
 use egui_window_glfw_passthrough::{GlfwBackend, GlfwConfig};
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -131,7 +131,13 @@ impl UserApp for App {
 }
 impl App {
     pub fn new(mut glfw_backend: GlfwBackend) -> Self {
-        let wgpu_backend = WgpuBackend::new(&mut glfw_backend, Default::default());
+        let wgpu_backend = WgpuBackend::new(
+            &mut glfw_backend,
+            WgpuConfig {
+                power_preference: PowerPreference::HighPerformance,
+                ..Default::default()
+            },
+        );
         Self {
             frame_count: 0,
             egui_wants_input: false,
