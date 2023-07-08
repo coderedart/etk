@@ -8,6 +8,9 @@ use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 struct App {
     frame_count: usize,
+    fps_reset: std::time::Instant,
+    fps: usize,
+    previous_frame_count: usize,
     egui_wants_input: bool,
     is_window_receiving_events: bool,
     egui_context: egui::Context,
@@ -35,9 +38,15 @@ impl UserApp for App {
         self.frame_count += 1;
         let egui_context = self.egui_context.clone();
         let egui_context = &&egui_context;
+        if self.fps_reset.elapsed().as_secs_f32() > 1.0 {
+            self.fps_reset = std::time::Instant::now();
+            self.fps = self.frame_count - self.previous_frame_count;
+            self.previous_frame_count = self.frame_count;
+        }
         // draw a triangle
         Window::new("egui user window").show(egui_context, |ui| {
             ui.label(format!("frame number: {}", self.frame_count));
+            ui.label(format!("fps: {}", self.fps));
             ui.label(format!("{:#?}", egui_context.pointer_latest_pos()));
             ui.checkbox(
                 &mut self.is_window_receiving_events,
@@ -130,6 +139,9 @@ impl App {
             egui_context: Default::default(),
             wgpu_backend,
             glfw_backend,
+            fps_reset: std::time::Instant::now(),
+            fps: 0,
+            previous_frame_count: 0,
         }
     }
 }
