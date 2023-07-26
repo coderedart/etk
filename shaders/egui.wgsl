@@ -16,16 +16,14 @@ fn vs_main(
     @location(2) a_color: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.tex_coord = a_tex_coord;
-    out.color = vec4<f32>(linear_from_srgb(a_color.rgb), a_color.a);
-
     out.position = vec4<f32>(
         2.0 * a_pos.x / u_screen_size.x - 1.0,
         1.0 - 2.0 * a_pos.y / u_screen_size.y,
-        0.5,
+        0.0,
         1.0,
     );
-
+    out.tex_coord = a_tex_coord;
+    out.color = a_color;
     return out;
 }
 
@@ -37,26 +35,23 @@ fn vs_main(
 
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let in_color = gamma_from_linear_rgba(in.color);
-
+fn fs_main_linear_output(in: VertexOutput) -> @location(0) vec4<f32> {
+    // texture is srgb, but gpu will auto convert to linear for us
     let tex_linear = textureSample(r_tex_color, r_tex_sampler, in.tex_coord);
-
+    // convert texture color to srgb
     let tex_gamma = gamma_from_linear_rgba(tex_linear);
-
-    let out_color_gamma = in_color * tex_gamma;
+    // mix texture and color from vertex input
+    let out_color_gamma = in.color * tex_gamma;
+    // return linear color because gpu will convert to srgb for us on a 
     return vec4<f32>(linear_from_srgb(out_color_gamma.rgb), out_color_gamma.a);
 }
 
 @fragment
-fn fs_linear_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let in_color = gamma_from_linear_rgba(in.color);
-
+fn fs_main_srgb_output(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_linear = textureSample(r_tex_color, r_tex_sampler, in.tex_coord);
-
     let tex_gamma = gamma_from_linear_rgba(tex_linear);
-
-    let out_color_gamma = in_color * tex_gamma;
+    let out_color_gamma = in.color * tex_gamma;
+    // on a linear framebuffer, gpu won't do any srgb conversion. So, we output in srgb ourselves 
     return vec4<f32>(out_color_gamma);
 }
 // 0-1 sRGB gamma  from  0-1 linear

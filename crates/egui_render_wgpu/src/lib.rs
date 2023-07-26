@@ -650,9 +650,9 @@ impl EguiPainter {
             fragment: Some(FragmentState {
                 module: &shader_module,
                 entry_point: if pipeline_surface_format.is_srgb() {
-                    "fs_main"
+                    "fs_main_linear_output"
                 } else {
-                    "fs_linear_main"
+                    "fs_main_srgb_output"
                 },
                 targets: &[Some(ColorTargetState {
                     format: pipeline_surface_format,
@@ -780,13 +780,37 @@ impl EguiPainter {
             let data_color32 = match delta.image {
                 egui::ImageData::Color(color_image) => color_image.pixels,
                 egui::ImageData::Font(font_image) => {
-                    font_image.srgba_pixels(Some(1.0)).collect::<Vec<_>>()
+                    font_image.srgba_pixels(None).collect::<Vec<_>>()
                 }
             };
             let data_bytes: &[u8] = bytemuck::cast_slice(data_color32.as_slice());
             match tex_id {
                 egui::TextureId::Managed(tex_id) => {
-                    if delta.pos.is_none() {
+                    if let Some(delta_pos) = delta.pos {
+                        // we only update part of the texture, if the tex id refers to a live texture
+                        if let Some(tex) = self.managed_textures.get(tex_id) {
+                            queue.write_texture(
+                                ImageCopyTexture {
+                                    texture: &tex.texture,
+                                    mip_level: 0,
+                                    origin: Origin3d {
+                                        x: delta_pos[0].try_into().unwrap(),
+                                        y: delta_pos[1].try_into().unwrap(),
+                                        z: 0,
+                                    },
+                                    aspect: TextureAspect::All,
+                                },
+                                data_bytes,
+                                ImageDataLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(size.width * 4),
+                                    // only required in 3d textures or 2d array textures
+                                    rows_per_image: None,
+                                },
+                                size,
+                            );
+                        }
+                    } else {
                         let mip_level_count = 1;
                         let new_texture = dev.create_texture(&TextureDescriptor {
                             label: None,
@@ -810,7 +834,7 @@ impl EguiPainter {
                             ImageDataLayout {
                                 offset: 0,
                                 bytes_per_row: Some(size.width * 4),
-                                rows_per_image: Some(size.height),
+                                rows_per_image: None,
                             },
                             size,
                         );

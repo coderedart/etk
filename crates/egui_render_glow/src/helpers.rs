@@ -155,7 +155,7 @@ pub unsafe fn create_egui_vao_buffers(
         .expect("failed to get vin_sc location");
     debug!("vin_sc vertex attribute location is {location}");
     glow_context.enable_vertex_attrib_array(location);
-    glow_context.vertex_attrib_pointer_f32(location, 4, glow::UNSIGNED_BYTE, false, 20, 16);
+    glow_context.vertex_attrib_pointer_f32(location, 4, glow::UNSIGNED_BYTE, true, 20, 16);
 
     glow_error!(glow_context);
     (vao, vbo, ebo)

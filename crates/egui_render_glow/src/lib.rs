@@ -21,9 +21,11 @@ macro_rules! glow_error {
     };
 }
 /// All shaders are targeting #version 300 es
-pub const EGUI_VS: &str = include_str!("..//egui.vert");
+pub const EGUI_VS: &str = include_str!("../egui.vert");
+/// output will be in linear space, so make suer to enable framebuffer srgb
+pub const EGUI_LINEAR_OUTPUT_FS: &str = include_str!("../egui_linear_output.frag");
 /// the output will be in srgb space, so make sure to disable framebuffer srgb.
-pub const EGUI_FS: &str = include_str!("../egui.frag");
+pub const EGUI_SRGB_OUTPUT_FS: &str = include_str!("../egui_srgb_output.frag");
 
 /// these are config to be provided to browser when requesting a webgl context
 ///
@@ -208,7 +210,16 @@ impl Painter {
             }
             glow_error!(gl);
             // compile shaders
-            let egui_program = create_program_from_src(gl, EGUI_VS, EGUI_FS);
+            let egui_program = create_program_from_src(
+                gl,
+                EGUI_VS,
+                if cfg!(wasm32) {
+                    // on wasm, we always assume srgb framebuffer
+                    EGUI_LINEAR_OUTPUT_FS
+                } else {
+                    EGUI_SRGB_OUTPUT_FS
+                },
+            );
             // shader verification
             glow_error!(gl);
             let u_screen_size = gl
