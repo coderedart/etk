@@ -5,15 +5,15 @@ use egui::{
 };
 use egui_backend::egui;
 use egui_backend::{GfxBackend, WindowBackend};
-use intmap::IntMap;
 use raw_window_handle::HasRawWindowHandle;
+use std::collections::BTreeMap;
 use std::{convert::TryInto, num::NonZeroU64, sync::Arc};
 use tracing::{debug, info};
-pub use wgpu;
 use wgpu::*;
 
-/// This provides a Gfx backend for egui by implementing the `crate::GfxBackend` trait.
-/// can be used by egui applications which want to render some objects  in the background but don't want a full renderer.
+pub use wgpu;
+
+/// This provides a Gfx backend for egui using wgpu as the backend 
 /// If you are making your own wgpu integration, then you can reuse the `EguiPainter` instead which contains only egui render specific data.
 pub struct WgpuBackend {
     /// wgpu instance
@@ -495,32 +495,31 @@ pub struct EguiPainter {
     vb_len: usize,
     /// current capacity of index buffer
     ib_len: usize,
-    /// vertex buffer
+    /// vertex buffer for all egui (clipped) meshes
     vb: Buffer,
-    /// index buffer
+    /// index buffer for all egui (clipped) meshes
     ib: Buffer,
-    /// Uniform buffer to store screen size in logical pixels
+    /// Uniform buffer to store screen size in logical points
     screen_size_buffer: Buffer,
-    /// bind group for the Uniform buffer using layout entry `SCREEN_SIZE_UNIFORM_BUFFER_BINDGROUP_ENTRY`
+    /// bind group for the Uniform buffer using layout entry [`SCREEN_SIZE_UNIFORM_BUFFER_BINDGROUP_ENTRY`]
     screen_size_bind_group: BindGroup,
     /// this layout is reused by all egui textures.
     pub texture_bindgroup_layout: BindGroupLayout,
     /// used by pipeline create function
     pub screen_size_bindgroup_layout: BindGroupLayout,
-    /// used to check if this matches the new surface after resume event. otherwise, recompile render pipeline
+    /// The current pipeline has been created with this format as the output
+    /// If we need to render to a different format, then we need to recreate the render pipeline with the relevant format as output
     surface_format: TextureFormat,
     /// egui render pipeline
     pipeline: RenderPipeline,
-    /// linear sampler for egui textures that need to create bindgroups
+    /// This is the sampler used for most textures that user uploads
     pub linear_sampler: Sampler,
-    /// nearest sampler for egui textures (especially font texture) that need to create bindgroups for binding to egui pipelien
+    /// nearest sampler suitable for font textures (or any pixellated textures)
     pub nearest_sampler: Sampler,
-
-    /// these are textures uploaded by egui. intmap is much faster than btree or hashmaps.
-    /// maybe we can use a proper struct instead of tuple?
-    managed_textures: IntMap<EguiTexture>,
+    /// Textures uploaded by egui itself. 
+    managed_textures: BTreeMap<u64, EguiTexture>,
     #[allow(unused)]
-    user_textures: IntMap<EguiTexture>,
+    user_textures: BTreeMap<u64, EguiTexture>,
     /// textures to free
     delete_textures: Vec<TextureId>,
     custom_data: IdTypeMap,
@@ -580,7 +579,7 @@ impl EguiPainter {
                                 1,
                                 &self
                                     .managed_textures
-                                    .get(key)
+                                    .get(&key)
                                     .expect("cannot find managed texture")
                                     .bindgroup,
                                 &[],
@@ -788,7 +787,7 @@ impl EguiPainter {
                 egui::TextureId::Managed(tex_id) => {
                     if let Some(delta_pos) = delta.pos {
                         // we only update part of the texture, if the tex id refers to a live texture
-                        if let Some(tex) = self.managed_textures.get(tex_id) {
+                        if let Some(tex) = self.managed_textures.get(&tex_id) {
                             queue.write_texture(
                                 ImageCopyTexture {
                                     texture: &tex.texture,
@@ -905,7 +904,7 @@ impl EguiPainter {
             for tid in delete_textures {
                 match tid {
                     TextureId::Managed(key) => {
-                        self.managed_textures.remove(key);
+                        self.managed_textures.remove(&key);
                     }
                     TextureId::User(_) => todo!(),
                 }

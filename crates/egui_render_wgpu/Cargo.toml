@@ -10,7 +10,6 @@ repository = "https://github.com/coderedart/etk"
 wgpu = { version = "0.17", features = ["webgl"]}
 pollster = { version = "0.3" }
 tracing = { version = "0.1" }
-intmap = { version = "2.0" }
 bytemuck = { version = "1" }
 raw-window-handle = "0.5"
 egui_backend = { version = "0.4", path = "../egui_backend", features = [
