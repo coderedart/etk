@@ -250,10 +250,7 @@ impl WindowBackend for GlfwBackend {
             window,
             framebuffer_size_physical: size_physical_pixels,
             scale,
-            cursor_pos: [
-                logical_cursor_position.0,
-                logical_cursor_position.1,
-            ],
+            cursor_pos: [logical_cursor_position.0, logical_cursor_position.1],
             raw_input,
             frame_events: vec![],
             resized_event_pending: true, // provide so that on first prepare frame, renderers can set their viewport sizes
