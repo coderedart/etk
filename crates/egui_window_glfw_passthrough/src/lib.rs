@@ -216,8 +216,8 @@ impl WindowBackend for GlfwBackend {
         let cursor_pos_virtual_units = window.get_cursor_pos();
         // #[cfg(not(target_os = "emscripten"))]
         let logical_cursor_position = (
-            cursor_pos_virtual_units.0 as f32 * pixels_per_virtual_unit as f32 / scale,
-            cursor_pos_virtual_units.1 as f32 * pixels_per_virtual_unit as f32 / scale,
+            cursor_pos_virtual_units.0 as f32 * pixels_per_virtual_unit / scale,
+            cursor_pos_virtual_units.1 as f32 * pixels_per_virtual_unit / scale,
         );
 
         let size_physical_pixels = [physical_width as u32, physical_height as u32];
@@ -251,8 +251,8 @@ impl WindowBackend for GlfwBackend {
             framebuffer_size_physical: size_physical_pixels,
             scale,
             cursor_pos: [
-                logical_cursor_position.0 as f32,
-                logical_cursor_position.1 as f32,
+                logical_cursor_position.0,
+                logical_cursor_position.1,
             ],
             raw_input,
             frame_events: vec![],
@@ -632,7 +632,7 @@ impl GlfwBackend {
                         x as f32 * self.physical_pixels_per_virtual_unit / self.scale,
                         y as f32 * self.physical_pixels_per_virtual_unit / self.scale,
                     );
-                    self.cursor_pos = [x as f32, y as f32];
+                    self.cursor_pos = [x, y];
                     Some(egui::Event::PointerMoved(self.cursor_pos.into()))
                 }
                 WindowEvent::CursorEnter(c) => {

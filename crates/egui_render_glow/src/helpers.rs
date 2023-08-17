@@ -161,7 +161,7 @@ pub unsafe fn create_egui_vao_buffers(
     (vao, vbo, ebo)
 }
 
-pub unsafe fn create_samplers(glow_context: &glow::Context) -> (Sampler, Sampler) {
+pub unsafe fn create_samplers(glow_context: &glow::Context) -> (Sampler, Sampler, Sampler) {
     let nearest_sampler = glow_context
         .create_sampler()
         .expect("failed to create nearest sampler");
@@ -186,6 +186,42 @@ pub unsafe fn create_samplers(glow_context: &glow::Context) -> (Sampler, Sampler
     );
     glow_error!(glow_context);
 
+    let font_sampler = glow_context
+        .create_sampler()
+        .expect("failed to create linear sampler");
+    glow_context.bind_sampler(0, Some(font_sampler));
+    glow_error!(glow_context);
+
+    glow_context.sampler_parameter_i32(
+        font_sampler,
+        glow::TEXTURE_MAG_FILTER,
+        glow::LINEAR
+            .try_into()
+            .expect("failed to fit LINEAR MIPMAP NEAREST in i32"),
+    );
+    glow_error!(glow_context);
+
+    glow_context.sampler_parameter_i32(
+        font_sampler,
+        glow::TEXTURE_MIN_FILTER,
+        glow::LINEAR
+            .try_into()
+            .expect("failed to fit LINEAR MIPMAP NEAREST in i32"),
+    );
+    glow_error!(glow_context);
+    glow_context.sampler_parameter_i32(
+        font_sampler,
+        glow::TEXTURE_WRAP_S,
+        glow::CLAMP_TO_EDGE as i32,
+    );
+    glow_error!(glow_context);
+
+    glow_context.sampler_parameter_i32(
+        font_sampler,
+        glow::TEXTURE_WRAP_T,
+        glow::CLAMP_TO_EDGE as i32,
+    );
+    glow_error!(glow_context);
     let linear_sampler = glow_context
         .create_sampler()
         .expect("failed to create linear sampler");
@@ -209,7 +245,13 @@ pub unsafe fn create_samplers(glow_context: &glow::Context) -> (Sampler, Sampler
             .expect("failed to fit LINEAR MIPMAP NEAREST in i32"),
     );
     glow_error!(glow_context);
-    (linear_sampler, nearest_sampler)
+    glow_context.sampler_parameter_i32(linear_sampler, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
+    glow_error!(glow_context);
+
+    glow_context.sampler_parameter_i32(linear_sampler, glow::TEXTURE_WRAP_T, glow::REPEAT as i32);
+    glow_error!(glow_context);
+
+    (linear_sampler, nearest_sampler, font_sampler)
 }
 
 #[allow(unused)]

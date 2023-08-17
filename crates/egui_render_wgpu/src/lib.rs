@@ -1,4 +1,5 @@
 mod painter;
+mod surface;
 
 use egui_backend::egui;
 use egui_backend::{GfxBackend, WindowBackend};
@@ -8,51 +9,10 @@ use std::sync::Arc;
 use tracing::{debug, info};
 use wgpu::*;
 
+pub use painter::*;
+pub use surface::SurfaceManager;
 pub use wgpu;
 
-/// This provides a Gfx backend for egui using wgpu as the backend
-/// If you are making your own wgpu integration, then you can reuse the `EguiPainter` instead which contains only egui render specific data.
-pub struct WgpuBackend {
-    /// wgpu instance
-    pub instance: Arc<Instance>,
-    /// wgpu adapter
-    pub adapter: Arc<Adapter>,
-    /// wgpu device.
-    pub device: Arc<Device>,
-    /// wgpu queue. if you have commands that you would like to submit, instead push them into `Self::command_encoders`
-    pub queue: Arc<Queue>,
-    /// contains egui specific wgpu data like textures or buffers or pipelines etc..
-    pub painter: EguiPainter,
-    pub surface_manager: SurfaceManager,
-    /// this is where we store our command encoders. we will create one during the `prepare_frame` fn.
-    /// users can just use this. or create new encoders, and push them into this vec.
-    /// `wgpu::Queue::submit` is very expensive, so we will submit ALL command encoders at the same time during the `present_frame` method
-    /// just before presenting the swapchain image (surface texture).
-    pub command_encoders: Vec<CommandEncoder>,
-}
-impl Drop for WgpuBackend {
-    fn drop(&mut self) {
-        tracing::warn!("dropping wgpu backend");
-    }
-}
-pub struct SurfaceManager {
-    /// we create a view for the swapchain image and set it to this field during the `prepare_frame` fn.
-    /// users can assume that it will *always* be available during the `UserApp::run` fn. but don't keep any references as
-    /// it will be taken and submitted during the `present_frame` method after rendering is done.
-    /// surface is always cleared by wgpu, so no need to wipe it again.
-    pub surface_view: Option<TextureView>,
-    /// once we acquire a swapchain image (surface texture), we will put it here. surface_view will be created from this
-    pub surface_current_image: Option<SurfaceTexture>,
-    /// this is the window surface
-    pub surface: Option<Surface>,
-    /// this configuration needs to be updated with the latest resize
-    pub surface_config: SurfaceConfiguration,
-    /// Surface manager will iterate over this and find the first format that is supported by surface.
-    /// if we find one, we will set surface configuration to that format.
-    /// if we don't find one, we will just use the first surface format support.
-    /// so, if you don't care about the surface format, just set this to an empty vector.
-    surface_formats_priority: Vec<TextureFormat>,
-}
 pub struct WgpuConfig {
     pub backends: Backends,
     pub power_preference: PowerPreference,
@@ -86,182 +46,29 @@ impl Default for WgpuConfig {
         }
     }
 }
-impl Drop for SurfaceManager {
-    fn drop(&mut self) {
-        tracing::warn!("dropping wgpu surface");
-    }
+/// This provides a Gfx backend for egui using wgpu as the backend
+/// If you are making your own wgpu integration, then you can reuse the `EguiPainter` instead which contains only egui render specific data.
+pub struct WgpuBackend {
+    /// wgpu instance
+    pub instance: Arc<Instance>,
+    /// wgpu adapter
+    pub adapter: Arc<Adapter>,
+    /// wgpu device.
+    pub device: Arc<Device>,
+    /// wgpu queue. if you have commands that you would like to submit, instead push them into `Self::command_encoders`
+    pub queue: Arc<Queue>,
+    /// contains egui specific wgpu data like textures or buffers or pipelines etc..
+    pub painter: EguiPainter,
+    pub surface_manager: SurfaceManager,
+    /// this is where we store our command encoders. we will create one during the `prepare_frame` fn.
+    /// users can just use this. or create new encoders, and push them into this vec.
+    /// `wgpu::Queue::submit` is very expensive, so we will submit ALL command encoders at the same time during the `present_frame` method
+    /// just before presenting the swapchain image (surface texture).
+    pub command_encoders: Vec<CommandEncoder>,
 }
-impl SurfaceManager {
-    pub fn new(
-        window_backend: &mut impl WindowBackend,
-        instance: &Instance,
-        adapter: &Adapter,
-        device: &Device,
-        surface: Option<Surface>,
-        surface_formats_priority: Vec<TextureFormat>,
-        surface_config: SurfaceConfiguration,
-    ) -> Self {
-        let mut surface_manager = Self {
-            surface_view: None,
-            surface_current_image: None,
-            surface,
-            surface_config,
-            surface_formats_priority,
-        };
-        surface_manager.reconfigure_surface(window_backend, instance, adapter, device);
-        surface_manager
-    }
-    pub fn create_current_surface_texture_view(
-        &mut self,
-        window_backend: &mut impl WindowBackend,
-        device: &Device,
-    ) {
-        if let Some(surface) = self.surface.as_ref() {
-            let current_surface_image = surface.get_current_texture().unwrap_or_else(|_| {
-                let phy_fb_size = window_backend.get_live_physical_size_framebuffer().unwrap();
-                self.surface_config.width = phy_fb_size[0];
-                self.surface_config.height = phy_fb_size[1];
-                surface.configure(device, &self.surface_config);
-                surface.get_current_texture().unwrap_or_else(|e| {
-                    panic!("failed to get surface even after reconfiguration. {e}")
-                })
-            });
-            if current_surface_image.suboptimal {
-                tracing::warn!("current surface image is suboptimal. ");
-            }
-            let surface_view = current_surface_image
-                .texture
-                .create_view(&TextureViewDescriptor {
-                    label: Some("surface view"),
-                    format: Some(self.surface_config.format),
-                    dimension: Some(TextureViewDimension::D2),
-                    aspect: TextureAspect::All,
-                    base_mip_level: 0,
-                    mip_level_count: None,
-                    base_array_layer: 0,
-                    array_layer_count: None,
-                });
-
-            self.surface_view = Some(surface_view);
-            self.surface_current_image = Some(current_surface_image);
-        } else {
-            tracing::warn!(
-                "skipping acquiring the currnet surface image because there's no surface"
-            );
-        }
-    }
-    /// This basically checks if the surface needs creating. and then if needed, creates surface if window exists.
-    /// then, it does all the work of configuring the surface.
-    /// this is used during resume events to create a surface.
-    pub fn reconfigure_surface(
-        &mut self,
-        window_backend: &mut impl WindowBackend,
-        instance: &Instance,
-        adapter: &Adapter,
-        device: &Device,
-    ) {
-        if let Some(window) = window_backend.get_window() {
-            if self.surface.is_none() {
-                self.surface = Some(unsafe {
-                    tracing::debug!("creating a surface with {:?}", window.raw_window_handle());
-                    instance
-                        .create_surface(window)
-                        .expect("failed to create surface")
-                });
-            }
-
-            let capabilities = self.surface.as_ref().unwrap().get_capabilities(adapter);
-            let supported_formats = capabilities.formats;
-            debug!(
-                "supported alpha modes: {:#?}",
-                &capabilities.alpha_modes[..]
-            );
-
-            if window_backend.get_config().transparent.unwrap_or_default() {
-                for alpha_mode in capabilities.alpha_modes.iter().copied() {
-                    match alpha_mode {
-                        CompositeAlphaMode::PreMultiplied | CompositeAlphaMode::PostMultiplied => {
-                            self.surface_config.alpha_mode = alpha_mode;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            debug!("supported formats of the surface: {supported_formats:#?}");
-
-            let mut compatible_format_found = false;
-            for sfmt in self.surface_formats_priority.iter() {
-                debug!("checking if {sfmt:?} is supported");
-                if supported_formats.contains(sfmt) {
-                    debug!("{sfmt:?} is supported. setting it as surface format");
-                    self.surface_config.format = *sfmt;
-                    compatible_format_found = true;
-                    break;
-                }
-            }
-            if !compatible_format_found {
-                if !self.surface_formats_priority.is_empty() {
-                    tracing::warn!(
-                        "could not find compatible surface format from user provided formats. choosing first supported format instead"
-                    );
-                }
-                self.surface_config.format = supported_formats
-                    .iter()
-                    .find(|f| f.is_srgb())
-                    .copied()
-                    .unwrap_or_else(|| {
-                        supported_formats
-                            .first()
-                            .copied()
-                            .expect("surface has zero supported texture formats")
-                    })
-            }
-            let view_format = if self.surface_config.format.is_srgb() {
-                self.surface_config.format
-            } else {
-                tracing::warn!(
-                    "surface format is not srgb: {:?}",
-                    self.surface_config.format
-                );
-                match self.surface_config.format {
-                    TextureFormat::Rgba8Unorm => TextureFormat::Rgba8UnormSrgb,
-                    TextureFormat::Bgra8Unorm => TextureFormat::Bgra8UnormSrgb,
-                    _ => self.surface_config.format,
-                }
-            };
-            self.surface_config.view_formats = vec![view_format];
-
-            #[cfg(target_os = "emscripten")]
-            {
-                self.surface_config.view_formats = vec![];
-            }
-
-            debug!(
-                "using format: {:#?} for surface configuration",
-                self.surface_config.format
-            );
-            self.resize_framebuffer(device, window_backend);
-        }
-    }
-
-    pub fn resize_framebuffer(&mut self, device: &Device, window_backend: &mut impl WindowBackend) {
-        if let Some(size) = window_backend.get_live_physical_size_framebuffer() {
-            self.surface_config.width = size[0];
-            self.surface_config.height = size[1];
-            info!(
-                "reconfiguring surface with config: {:#?}",
-                &self.surface_config
-            );
-            self.surface
-                .as_ref()
-                .unwrap()
-                .configure(device, &self.surface_config);
-        }
-    }
-    pub fn suspend(&mut self) {
-        self.surface = None;
-        self.surface_current_image = None;
-        self.surface_view = None;
+impl Drop for WgpuBackend {
+    fn drop(&mut self) {
+        tracing::warn!("dropping wgpu backend");
     }
 }
 impl WgpuBackend {
@@ -389,6 +196,7 @@ impl GfxBackend for WgpuBackend {
                 })],
                 depth_stencil_attachment: None,
             });
+            self.command_encoders.push(ce);
         }
     }
 
@@ -398,6 +206,11 @@ impl GfxBackend for WgpuBackend {
         textures_delta: egui::TexturesDelta,
         logical_screen_size: [f32; 2],
     ) {
+        let mut command_encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("egui command encoder"),
+            });
         let draw_calls = self.painter.upload_egui_data(
             &self.device,
             &self.queue,
@@ -408,12 +221,8 @@ impl GfxBackend for WgpuBackend {
                 self.surface_manager.surface_config.width,
                 self.surface_manager.surface_config.height,
             ],
+            &mut command_encoder,
         );
-        let mut command_encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("egui command encoder"),
-            });
         {
             let mut egui_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("egui render pass"),

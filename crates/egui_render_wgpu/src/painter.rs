@@ -34,13 +34,17 @@ pub struct EguiPainter {
     pub linear_sampler: Sampler,
     /// nearest sampler suitable for font textures (or any pixellated textures)
     pub nearest_sampler: Sampler,
+    font_sampler: Sampler,
     /// Textures uploaded by egui itself.
     managed_textures: BTreeMap<u64, EguiTexture>,
-    #[allow(unused)]
-    user_textures: BTreeMap<u64, EguiTexture>,
+    /// these are exposed to user so that they can edit them or insert any custom textures which aren't supported by egui like texture wrapping or array textures etc..
+    pub user_textures: BTreeMap<u64, EguiTexture>,
     /// textures to free
     delete_textures: Vec<TextureId>,
     custom_data: IdTypeMap,
+    mipmap_pipeline: RenderPipeline,
+    mipmap_bgl: BindGroupLayout,
+    mipmap_sampler: Sampler,
 }
 
 pub const EGUI_SHADER_SRC: &str = include_str!("../egui.wgsl");
@@ -63,12 +67,6 @@ impl Default for CallbackFn {
     }
 }
 
-/// textures uploaded by egui are represented by this struct
-pub struct EguiTexture {
-    pub texture: Texture,
-    pub view: TextureView,
-    pub bindgroup: BindGroup,
-}
 /// We take all the
 pub enum EguiDrawCalls {
     Mesh {
@@ -158,8 +156,6 @@ impl EguiPainter {
         screen_size_bindgroup_layout: &BindGroupLayout,
         texture_bindgroup_layout: &BindGroupLayout,
     ) -> RenderPipeline {
-        // let srgb = pipeline_surface_format.is_srgb();
-
         // pipeline layout. screensize uniform buffer for vertex shader + texture and sampler for fragment shader
         let egui_pipeline_layout = dev.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("egui pipeline layout"),
@@ -246,6 +242,9 @@ impl EguiPainter {
             label: Some("linear sampler"),
             mag_filter: FilterMode::Linear,
             min_filter: FilterMode::Linear,
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            address_mode_w: AddressMode::Repeat,
             ..Default::default()
         });
         let nearest_sampler = dev.create_sampler(&SamplerDescriptor {
@@ -255,6 +254,14 @@ impl EguiPainter {
             ..Default::default()
         });
 
+        let font_sampler = dev.create_sampler(&SamplerDescriptor {
+            label: Some("egui font sampler"),
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            ..Default::default()
+        });
         // empty vertex and index buffers.
         let vb = dev.create_buffer(&BufferDescriptor {
             label: Some("egui vertex buffer"),
@@ -269,12 +276,54 @@ impl EguiPainter {
             mapped_at_creation: false,
         });
 
+        let mipmap_shader = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Blit Shader for Mipmaps"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+                "../blit.wgsl"
+            ))),
+        });
+
+        let mipmap_pipeline = dev.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("blit"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &mipmap_shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &mipmap_shader,
+                entry_point: "fs_main",
+                targets: &[Some(TextureFormat::Rgba8UnormSrgb.into())],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+        let mipmap_bgl = pipeline.get_bind_group_layout(0);
+
+        let mipmap_sampler = dev.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("mipmap sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
         Self {
             screen_size_buffer,
             pipeline,
             linear_sampler,
             nearest_sampler,
             managed_textures: Default::default(),
+            user_textures: Default::default(),
             vb,
             ib,
             screen_size_bind_group,
@@ -283,9 +332,12 @@ impl EguiPainter {
             ib_len: 0,
             delete_textures: Vec::new(),
             custom_data: IdTypeMap::default(),
-            user_textures: Default::default(),
             screen_size_bindgroup_layout,
             surface_format,
+            mipmap_pipeline,
+            mipmap_bgl,
+            mipmap_sampler,
+            font_sampler,
         }
     }
     pub fn on_resume(&mut self, dev: &Device, surface_format: TextureFormat) {
@@ -302,8 +354,10 @@ impl EguiPainter {
         &mut self,
         dev: &Device,
         queue: &Queue,
+        encoder: &mut CommandEncoder,
         textures_delta_set: Vec<(TextureId, ImageDelta)>,
     ) {
+        let mut textures_needing_mipmap_generation = vec![];
         for (tex_id, delta) in textures_delta_set {
             let width = delta.image.width() as u32;
             let height = delta.image.height() as u32;
@@ -313,112 +367,188 @@ impl EguiPainter {
                 height,
                 depth_or_array_layers: 1,
             };
-
+            let mut is_this_font_texure = false;
+            // no need for mipmaps if we are dealing with font texture
+            let mip_level_count = match tex_id {
+                TextureId::Managed(tid) if tid == 0 => {
+                    is_this_font_texure = true;
+                    1
+                }
+                _ => {
+                    let mip_level_count = (width.max(height) as f32).log2().floor() as u32 + 1;
+                    textures_needing_mipmap_generation.push((tex_id, mip_level_count));
+                    mip_level_count
+                }
+            };
             let data_color32 = match delta.image {
                 ImageData::Color(color_image) => color_image.pixels,
                 ImageData::Font(font_image) => font_image.srgba_pixels(None).collect::<Vec<_>>(),
             };
-            let data_bytes: &[u8] = bytemuck::cast_slice(data_color32.as_slice());
-            match tex_id {
-                TextureId::Managed(tex_id) => {
-                    if let Some(delta_pos) = delta.pos {
-                        // we only update part of the texture, if the tex id refers to a live texture
-                        if let Some(tex) = self.managed_textures.get(&tex_id) {
-                            queue.write_texture(
-                                ImageCopyTexture {
-                                    texture: &tex.texture,
-                                    mip_level: 0,
-                                    origin: Origin3d {
-                                        x: delta_pos[0].try_into().unwrap(),
-                                        y: delta_pos[1].try_into().unwrap(),
-                                        z: 0,
-                                    },
-                                    aspect: TextureAspect::All,
-                                },
-                                data_bytes,
-                                ImageDataLayout {
-                                    offset: 0,
-                                    bytes_per_row: Some(size.width * 4),
-                                    // only required in 3d textures or 2d array textures
-                                    rows_per_image: None,
-                                },
-                                size,
-                            );
-                        }
-                    } else {
-                        let mip_level_count = 1;
-                        let new_texture = dev.create_texture(&TextureDescriptor {
-                            label: None,
-                            size,
-                            mip_level_count,
-                            sample_count: 1,
-                            dimension: TextureDimension::D2,
-                            format: TextureFormat::Rgba8UnormSrgb,
-                            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                            view_formats: &[TextureFormat::Rgba8UnormSrgb],
-                        });
 
-                        queue.write_texture(
-                            ImageCopyTexture {
-                                texture: &new_texture,
-                                mip_level: 0,
-                                origin: Origin3d::default(),
-                                aspect: TextureAspect::All,
+            let data_bytes: &[u8] = bytemuck::cast_slice(data_color32.as_slice());
+
+            if let Some(delta_pos) = delta.pos {
+                let tex = match tex_id {
+                    TextureId::Managed(tid) => self.managed_textures.get(&tid),
+                    TextureId::User(tid) => self.user_textures.get(&tid),
+                };
+                // we only update part of the texture, if the tex id refers to a live texture
+                if let Some(tex) = tex {
+                    queue.write_texture(
+                        ImageCopyTexture {
+                            texture: &tex.texture,
+                            mip_level: 0,
+                            origin: Origin3d {
+                                x: delta_pos[0].try_into().unwrap(),
+                                y: delta_pos[1].try_into().unwrap(),
+                                z: 0,
                             },
-                            data_bytes,
-                            ImageDataLayout {
-                                offset: 0,
-                                bytes_per_row: Some(size.width * 4),
-                                rows_per_image: None,
-                            },
-                            size,
-                        );
-                        let view = new_texture.create_view(&TextureViewDescriptor {
-                            label: None,
-                            format: Some(TextureFormat::Rgba8UnormSrgb),
-                            dimension: Some(TextureViewDimension::D2),
                             aspect: TextureAspect::All,
-                            base_mip_level: 0,
-                            mip_level_count: None,
-                            base_array_layer: 0,
-                            array_layer_count: None,
-                        });
-                        assert!(delta.options.magnification == delta.options.minification);
-                        let bindgroup = dev.create_bind_group(&BindGroupDescriptor {
-                            label: None,
-                            layout: &self.texture_bindgroup_layout,
-                            entries: &[
-                                BindGroupEntry {
-                                    binding: 0,
-                                    resource: BindingResource::Sampler(if tex_id == 0 {
-                                        &self.nearest_sampler
-                                    } else {
-                                        match delta.options.magnification {
-                                            TextureFilter::Nearest => &self.nearest_sampler,
-                                            TextureFilter::Linear => &self.linear_sampler,
-                                        }
-                                    }),
-                                },
-                                BindGroupEntry {
-                                    binding: 1,
-                                    resource: BindingResource::TextureView(&view),
-                                },
-                            ],
-                        });
-                        self.managed_textures.insert(
-                            tex_id,
-                            EguiTexture {
-                                texture: new_texture,
-                                view,
-                                bindgroup,
-                            },
-                        );
+                        },
+                        data_bytes,
+                        ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(size.width * 4),
+                            // only required in 3d textures or 2d array textures
+                            rows_per_image: None,
+                        },
+                        size,
+                    );
+                }
+            } else {
+                let new_texture = dev.create_texture(&TextureDescriptor {
+                    label: None,
+                    size,
+                    mip_level_count,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format: TextureFormat::Rgba8UnormSrgb,
+                    usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                    view_formats: &[TextureFormat::Rgba8UnormSrgb],
+                });
+
+                queue.write_texture(
+                    ImageCopyTexture {
+                        texture: &new_texture,
+                        mip_level: 0,
+                        origin: Origin3d::default(),
+                        aspect: TextureAspect::All,
+                    },
+                    data_bytes,
+                    ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(size.width * 4),
+                        rows_per_image: None,
+                    },
+                    size,
+                );
+                let view = new_texture.create_view(&TextureViewDescriptor {
+                    label: None,
+                    format: Some(TextureFormat::Rgba8UnormSrgb),
+                    dimension: Some(TextureViewDimension::D2),
+                    aspect: TextureAspect::All,
+                    base_mip_level: 0,
+                    mip_level_count: Some(mip_level_count),
+                    base_array_layer: 0,
+                    array_layer_count: None,
+                });
+                assert!(delta.options.magnification == delta.options.minification);
+                let bindgroup = dev.create_bind_group(&BindGroupDescriptor {
+                    label: None,
+                    layout: &self.texture_bindgroup_layout,
+                    entries: &[
+                        BindGroupEntry {
+                            binding: 0,
+                            resource: BindingResource::Sampler(if is_this_font_texure {
+                                &self.font_sampler
+                            } else {
+                                match delta.options.magnification {
+                                    TextureFilter::Nearest => &self.nearest_sampler,
+                                    TextureFilter::Linear => &self.linear_sampler,
+                                }
+                            }),
+                        },
+                        BindGroupEntry {
+                            binding: 1,
+                            resource: BindingResource::TextureView(&view),
+                        },
+                    ],
+                });
+                let tex = EguiTexture {
+                    texture: new_texture,
+                    view,
+                    bindgroup,
+                };
+                match tex_id {
+                    TextureId::Managed(tid) => {
+                        self.managed_textures.insert(tid, tex);
+                    }
+                    TextureId::User(tid) => {
+                        self.user_textures.insert(tid, tex);
                     }
                 }
-                TextureId::User(_) => todo!(),
+            }
+        }
+        for (tex_id, mipmap_level_count) in textures_needing_mipmap_generation {
+            let texture = match tex_id {
+                TextureId::Managed(tid) => self.managed_textures.get(&tid),
+                TextureId::User(tid) => self.user_textures.get(&tid),
+            };
+            if let Some(texture) = texture {
+                let views = (0..mipmap_level_count)
+                    .map(|mip| {
+                        texture.texture.create_view(&wgpu::TextureViewDescriptor {
+                            label: Some("mip"),
+                            format: None,
+                            dimension: None,
+                            aspect: wgpu::TextureAspect::All,
+                            base_mip_level: mip,
+                            mip_level_count: Some(1),
+                            base_array_layer: 0,
+                            array_layer_count: None,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                for target_mip in 1..mipmap_level_count as usize {
+                    let bind_group = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &self.mipmap_bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &views[target_mip - 1],
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.mipmap_sampler),
+                            },
+                        ],
+                        label: None,
+                    });
+
+                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &views[target_mip],
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                store: true,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                    });
+
+                    rpass.set_pipeline(&self.mipmap_pipeline);
+                    rpass.set_bind_group(0, &bind_group, &[]);
+                    rpass.draw(0..3, 0..1);
+                }
             }
         }
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn upload_egui_data(
         &mut self,
         dev: &Device,
@@ -427,12 +557,13 @@ impl EguiPainter {
         textures_delta: TexturesDelta,
         logical_screen_size: [f32; 2],
         physical_framebuffer_size: [u32; 2],
+        encoder: &mut CommandEncoder,
     ) -> Vec<EguiDrawCalls> {
         let scale = physical_framebuffer_size[0] as f32 / logical_screen_size[0];
         // first deal with textures
         {
             // we need to delete textures in textures_delta.free AFTER the draw calls
-            // so we store them in self.delete_textures.
+            // so we store them in self.delete_textures and delete them next frame.
             // otoh, the textures that were scheduled to be deleted previous frame, we will delete now
 
             let delete_textures = std::mem::replace(&mut self.delete_textures, textures_delta.free);
@@ -442,11 +573,13 @@ impl EguiPainter {
                     TextureId::Managed(key) => {
                         self.managed_textures.remove(&key);
                     }
-                    TextureId::User(_) => todo!(),
+                    TextureId::User(key) => {
+                        self.user_textures.remove(&key);
+                    }
                 }
             }
             // upload textures
-            self.set_textures(dev, queue, textures_delta.set);
+            self.set_textures(dev, queue, encoder, textures_delta.set);
         }
         // update screen size uniform buffer
         queue.write_buffer(
@@ -699,5 +832,8 @@ pub const EGUI_PIPELINE_BLEND_STATE: BlendState = BlendState {
         operation: BlendOperation::Add,
     },
 };
-
-// `Default::default` is not const. so, we have to manually fill the default values
+pub struct EguiTexture {
+    pub texture: Texture,
+    pub view: TextureView,
+    pub bindgroup: BindGroup,
+}

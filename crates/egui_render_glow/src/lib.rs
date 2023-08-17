@@ -177,6 +177,7 @@ pub struct Painter {
     /// Most of these objects are created at startup
     pub linear_sampler: Sampler,
     pub nearest_sampler: Sampler,
+    pub font_sampler: Sampler,
     pub managed_textures: IntMap<GpuTexture>,
     pub egui_program: Program,
     pub vao: VertexArray,
@@ -233,7 +234,7 @@ impl Painter {
             gl.use_program(Some(egui_program));
             let (vao, vbo, ebo) = create_egui_vao_buffers(gl, egui_program);
             debug!("created egui vao, vbo, ebo");
-            let (linear_sampler, nearest_sampler) = create_samplers(gl);
+            let (linear_sampler, nearest_sampler, font_sampler) = create_samplers(gl);
             debug!("created linear and nearest samplers");
             Self {
                 managed_textures: Default::default(),
@@ -243,6 +244,7 @@ impl Painter {
                 ebo,
                 linear_sampler,
                 nearest_sampler,
+                font_sampler,
                 u_screen_size,
                 u_sampler,
                 clipped_primitives: Vec::new(),
@@ -270,6 +272,10 @@ impl Painter {
 
         // update textures
         for (texture_id, delta) in textures_delta.set {
+            let sampler = match delta.options.minification {
+                egui::TextureFilter::Nearest => self.nearest_sampler,
+                egui::TextureFilter::Linear => self.linear_sampler,
+            };
             match texture_id {
                 TextureId::Managed(managed) => {
                     glow_context.bind_texture(
@@ -285,9 +291,10 @@ impl Painter {
                                     width: 0,
                                     height: 0,
                                     sampler: if managed == 0 {
-                                        self.nearest_sampler
+                                        // special sampler for font that would clamp to edge
+                                        self.font_sampler
                                     } else {
-                                        self.linear_sampler
+                                        sampler
                                     },
                                 })
                                 .handle
