@@ -3,7 +3,6 @@ mod surface;
 
 use egui_backend::egui;
 use egui_backend::{GfxBackend, WindowBackend};
-use painter::EguiPainter;
 use raw_window_handle::HasRawWindowHandle;
 use std::sync::Arc;
 use tracing::{debug, info};
