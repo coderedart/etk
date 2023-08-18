@@ -10,41 +10,41 @@ use wgpu::*;
 
 pub struct EguiPainter {
     /// current capacity of vertex buffer
-    vb_len: usize,
+    pub vb_len: usize,
     /// current capacity of index buffer
-    ib_len: usize,
+    pub ib_len: usize,
     /// vertex buffer for all egui (clipped) meshes
-    vb: Buffer,
+    pub vb: Buffer,
     /// index buffer for all egui (clipped) meshes
-    ib: Buffer,
+    pub ib: Buffer,
     /// Uniform buffer to store screen size in logical points
-    screen_size_buffer: Buffer,
+    pub screen_size_buffer: Buffer,
     /// bind group for the Uniform buffer using layout entry [`SCREEN_SIZE_UNIFORM_BUFFER_BINDGROUP_ENTRY`]
-    screen_size_bind_group: BindGroup,
+    pub screen_size_bind_group: BindGroup,
     /// this layout is reused by all egui textures.
     pub texture_bindgroup_layout: BindGroupLayout,
     /// used by pipeline create function
     pub screen_size_bindgroup_layout: BindGroupLayout,
     /// The current pipeline has been created with this format as the output
     /// If we need to render to a different format, then we need to recreate the render pipeline with the relevant format as output
-    surface_format: TextureFormat,
+    pub surface_format: TextureFormat,
     /// egui render pipeline
-    pipeline: RenderPipeline,
+    pub pipeline: RenderPipeline,
     /// This is the sampler used for most textures that user uploads
     pub linear_sampler: Sampler,
     /// nearest sampler suitable for font textures (or any pixellated textures)
     pub nearest_sampler: Sampler,
-    font_sampler: Sampler,
+    pub font_sampler: Sampler,
     /// Textures uploaded by egui itself.
-    managed_textures: BTreeMap<u64, EguiTexture>,
+    pub managed_textures: BTreeMap<u64, EguiTexture>,
     /// these are exposed to user so that they can edit them or insert any custom textures which aren't supported by egui like texture wrapping or array textures etc..
     pub user_textures: BTreeMap<u64, EguiTexture>,
     /// textures to free
-    delete_textures: Vec<TextureId>,
-    custom_data: IdTypeMap,
-    mipmap_pipeline: RenderPipeline,
-    mipmap_bgl: BindGroupLayout,
-    mipmap_sampler: Sampler,
+    pub delete_textures: Vec<TextureId>,
+    pub custom_data: IdTypeMap,
+    pub mipmap_pipeline: RenderPipeline,
+    pub mipmap_bgl: BindGroupLayout,
+    pub mipmap_sampler: Sampler,
 }
 
 pub const EGUI_SHADER_SRC: &str = include_str!("../egui.wgsl");
