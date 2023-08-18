@@ -84,7 +84,7 @@ pub enum EguiDrawCalls {
 }
 impl EguiPainter {
     pub fn draw_egui_with_renderpass<'rpass>(
-        &'rpass mut self,
+        &'rpass self,
         rpass: &mut RenderPass<'rpass>,
         draw_calls: Vec<EguiDrawCalls>,
     ) {
