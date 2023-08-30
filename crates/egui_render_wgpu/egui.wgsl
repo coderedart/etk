@@ -30,9 +30,8 @@ fn vs_main(
 
 
 // Fragment shader bindings
-@group(1) @binding(0) var r_tex_sampler: sampler;
-@group(1) @binding(1) var r_tex_color: texture_2d<f32>;
-
+@group(1) @binding(0) var r_tex_color: texture_2d<f32>;
+@group(1) @binding(1) var r_tex_sampler: sampler;
 
 @fragment
 fn fs_main_linear_output(in: VertexOutput) -> @location(0) vec4<f32> {

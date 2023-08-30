@@ -1,5 +1,5 @@
 use egui_backend::{
-    egui::{self, Window},
+    egui::{self, TextureHandle, TextureOptions, Window},
     BackendConfig, GfxBackend, UserApp, WindowBackend,
 };
 use egui_render_wgpu::{wgpu::PowerPreference, WgpuBackend, WgpuConfig};
@@ -13,6 +13,7 @@ struct App {
     previous_frame_count: usize,
     egui_wants_input: bool,
     is_window_receiving_events: bool,
+    image_handle: Option<TextureHandle>,
     egui_context: egui::Context,
     wgpu_backend: WgpuBackend,
     glfw_backend: GlfwBackend,
@@ -43,7 +44,6 @@ impl UserApp for App {
             self.fps = self.frame_count - self.previous_frame_count;
             self.previous_frame_count = self.frame_count;
         }
-        // draw a triangle
         Window::new("egui user window").show(egui_context, |ui| {
             ui.label(format!("frame number: {}", self.frame_count));
             ui.label(format!("fps: {}", self.fps));
@@ -53,6 +53,21 @@ impl UserApp for App {
                 "Is Window receiving events?",
             );
             ui.checkbox(&mut self.egui_wants_input, "Does egui want input?");
+            let handle = self
+                .image_handle
+                .get_or_insert_with(|| {
+                    egui_context.load_texture(
+                        "cat texture",
+                        egui_extras::image::load_image_bytes(include_bytes!("../../cat.jpg"))
+                            .expect("cat image is invalid jpg"),
+                        TextureOptions {
+                            magnification: egui::TextureFilter::Linear,
+                            minification: egui::TextureFilter::Linear,
+                        },
+                    )
+                })
+                .id();
+            ui.image(handle, [620.0, 427.0]);
         });
         let cursor_pos = egui_context.pointer_latest_pos().unwrap_or_default();
         // just some controls to show how you can use glfw_backend
@@ -148,6 +163,7 @@ impl App {
             fps_reset: std::time::Instant::now(),
             fps: 0,
             previous_frame_count: 0,
+            image_handle: None,
         }
     }
 }

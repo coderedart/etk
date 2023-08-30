@@ -1,13 +1,13 @@
 [package]
 name = "egui_render_wgpu"
-version = "0.4.8"
+version = "0.4.9"
 edition = "2021"
 description = "egui rendering backend using wgpu"
 license = "MIT"
 repository = "https://github.com/coderedart/etk"
 
 [dependencies]
-wgpu = { version = "0.17", features = ["webgl"]}
+wgpu = { version = "0.17", features = ["webgl"] }
 pollster = { version = "0.3" }
 tracing = { version = "0.1" }
 bytemuck = { version = "1" }

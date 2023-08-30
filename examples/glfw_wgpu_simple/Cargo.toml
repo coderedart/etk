@@ -11,3 +11,5 @@ egui_backend = { path = "../../crates/egui_backend" }
 egui_window_glfw_passthrough = { path = "../../crates/egui_window_glfw_passthrough" }
 egui_render_wgpu = { path = "../../crates/egui_render_wgpu" }
 tracing-subscriber = { version = "*", features = ["env-filter"] }
+egui_extras = { version = "*", features = ["image"] }
+image = { version = "*", features = ["jpeg"] }

@@ -305,8 +305,28 @@ impl EguiPainter {
             multiview: None,
         });
 
-        let mipmap_bgl = pipeline.get_bind_group_layout(0);
-
+        let mipmap_bgl = dev.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("mipmap bgl"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        dbg!(&mipmap_bgl);
         let mipmap_sampler = dev.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("mipmap sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -423,7 +443,9 @@ impl EguiPainter {
                     sample_count: 1,
                     dimension: TextureDimension::D2,
                     format: TextureFormat::Rgba8UnormSrgb,
-                    usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                    usage: TextureUsages::TEXTURE_BINDING
+                        | TextureUsages::COPY_DST
+                        | TextureUsages::RENDER_ATTACHMENT,
                     view_formats: &[TextureFormat::Rgba8UnormSrgb],
                 });
 
@@ -459,6 +481,10 @@ impl EguiPainter {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
+                            resource: BindingResource::TextureView(&view),
+                        },
+                        BindGroupEntry {
+                            binding: 1,
                             resource: BindingResource::Sampler(if is_this_font_texure {
                                 &self.font_sampler
                             } else {
@@ -467,10 +493,6 @@ impl EguiPainter {
                                     TextureFilter::Linear => &self.linear_sampler,
                                 }
                             }),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::TextureView(&view),
                         },
                     ],
                 });
@@ -525,7 +547,7 @@ impl EguiPainter {
                                 resource: wgpu::BindingResource::Sampler(&self.mipmap_sampler),
                             },
                         ],
-                        label: None,
+                        label: Some("mipmap bindgroup"),
                     });
 
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -770,17 +792,17 @@ pub const TEXTURE_BINDGROUP_ENTRIES: [BindGroupLayoutEntry; 2] = [
     BindGroupLayoutEntry {
         binding: 0,
         visibility: ShaderStages::FRAGMENT,
-        ty: BindingType::Sampler(SamplerBindingType::Filtering),
-        count: None,
-    },
-    BindGroupLayoutEntry {
-        binding: 1,
-        visibility: ShaderStages::FRAGMENT,
         ty: BindingType::Texture {
             sample_type: TextureSampleType::Float { filterable: true },
             view_dimension: TextureViewDimension::D2,
             multisampled: false,
         },
+        count: None,
+    },
+    BindGroupLayoutEntry {
+        binding: 1,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Sampler(SamplerBindingType::Filtering),
         count: None,
     },
 ];
