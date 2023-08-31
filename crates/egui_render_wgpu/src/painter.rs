@@ -326,7 +326,7 @@ impl EguiPainter {
                 },
             ],
         });
-        dbg!(&mipmap_bgl);
+
         let mipmap_sampler = dev.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("mipmap sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
