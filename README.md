@@ -1,4 +1,6 @@
-
+# Project Abandoned
+I am not really into immediate mode guis these days, so i will have to stop putting my time into this project. 
+Fork it if you want.
 
 [![checkmate](https://github.com/coderedart/etk/actions/workflows/rust_ci.yml/badge.svg)](https://github.com/coderedart/etk/actions/workflows/rust_ci.yml)
 
